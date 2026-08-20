@@ -42,6 +42,13 @@ class Settings(BaseSettings):
     gitops_repo: str = Field(default="estate-gitops", alias="GITOPS_REPO")
     gitops_base_branch: str = Field(default="main", alias="GITOPS_BASE_BRANCH")
 
+    # --- Model credentials -------------------------------------------------
+    # The ONLY secret value read from .env rather than Secret Manager, because
+    # the development path (AI Studio free tier) has nowhere else to put it.
+    # .env is gitignored. Deployed services use Vertex + the runtime service
+    # account and set no key at all.
+    google_api_key: str = Field(default="", alias="GOOGLE_API_KEY")
+
     # --- Secret Manager secret names (never the values) --------------------
     secret_github_token: str = Field(default="github-token", alias="SECRET_GITHUB_TOKEN")
     secret_aks_token: str = Field(default="aks-reader-token", alias="SECRET_AKS_TOKEN")
@@ -69,13 +76,60 @@ def settings() -> Settings:
     return Settings()
 
 
-def configure_genai_env() -> None:
-    """Push Vertex routing into the environment before any google-genai import path runs.
+class CredentialError(RuntimeError):
+    pass
 
-    google-adk does not read these itself; the underlying google-genai client does.
+
+def configure_genai_env() -> None:
+    """Put model routing into os.environ before any google-genai client is built.
+
+    This has to exist because of a trap that silently produces auth errors:
+    pydantic-settings reads `.env` into *this Settings object*, but never into
+    `os.environ`. The google-genai SDK only reads `os.environ`. So a
+    GOOGLE_API_KEY sitting in .env reaches Settings and nothing else — the SDK
+    never sees it, and you get an unauthenticated error while staring at a file
+    that plainly contains the key.
+
+    Two supported paths:
+
+      Vertex (deployed)  GOOGLE_GENAI_USE_ENTERPRISE=1 + application-default
+                         credentials or the Cloud Run service account. No key.
+      Gemini API (dev)   GOOGLE_GENAI_USE_ENTERPRISE=0 + GOOGLE_API_KEY.
+                         Use the AI Studio free tier here so iteration costs
+                         nothing and the $10 of credit survives for the demo.
     """
     s = settings()
-    os.environ.setdefault("GOOGLE_GENAI_USE_ENTERPRISE", "1" if s.use_vertex else "0")
+    os.environ["GOOGLE_GENAI_USE_ENTERPRISE"] = "1" if s.use_vertex else "0"
+
     if s.use_vertex:
         os.environ.setdefault("GOOGLE_CLOUD_PROJECT", s.gcp_project)
         os.environ.setdefault("GOOGLE_CLOUD_LOCATION", s.gcp_location)
+        return
+
+    key = s.google_api_key or os.environ.get("GOOGLE_API_KEY", "")
+    if not key:
+        raise CredentialError(
+            "No model credential found.\n\n"
+            "  For the free development path, put your AI Studio key in .env:\n"
+            "      GOOGLE_GENAI_USE_ENTERPRISE=0\n"
+            "      GOOGLE_API_KEY=AIza...\n"
+            "    Get one at https://aistudio.google.com/apikey\n\n"
+            "  For Vertex, set GOOGLE_GENAI_USE_ENTERPRISE=1 and run\n"
+            "      gcloud auth application-default login\n\n"
+            "  Or drop --live to run against scripted models, which need neither."
+        )
+    os.environ["GOOGLE_API_KEY"] = key
+    # Setting project/location while the Vertex flag is false makes the SDK
+    # raise, so they are deliberately not exported on this path.
+    for stale in ("GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION"):
+        os.environ.pop(stale, None)
+
+
+def credential_mode() -> str:
+    """One line describing where model calls will authenticate from."""
+    s = settings()
+    if s.use_vertex:
+        return f"Vertex AI · project {s.gcp_project} · {s.gcp_location}"
+    if s.google_api_key:
+        return f"Gemini API · key {s.google_api_key[:6]}…{s.google_api_key[-4:]}"
+    return "Gemini API · NO KEY SET"

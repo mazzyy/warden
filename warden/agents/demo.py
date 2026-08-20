@@ -17,7 +17,7 @@ import sys
 
 from warden.agents.fixtures import scripted_models
 from warden.agents.orchestrator import handle_incident
-from warden.config import configure_genai_env, settings
+from warden.config import CredentialError, configure_genai_env, credential_mode, settings
 from warden.control_plane.budget import estimate_usd
 from warden.control_plane.registry import load_all
 from warden.control_plane.store import InMemoryStore
@@ -57,7 +57,12 @@ async def main(live: bool, mode: str) -> int:
     print(f"  github     {s.gitops_full_name}")
 
     if live:
-        configure_genai_env()
+        try:
+            configure_genai_env()
+        except CredentialError as exc:
+            print(f"\n{RED}{exc}{RESET}\n")
+            return 2
+        print(f"  auth       {credential_mode()}")
     else:
         print(f"\n{YELLOW}  Scripted models are a development affordance. The submitted{RESET}")
         print(f"{YELLOW}  demo video must run --live: the rules require unedited live execution.{RESET}")
