@@ -1,0 +1,26 @@
+apiVersion: warden.dev/v1
+kind: Agent
+metadata:
+  name: remediator
+  description: >-
+    Turns a diagnosis into a minimal patch. Its only write primitive is opening a
+    pull request; it holds no cluster write scope, and the GitHub token backing
+    propose_patch cannot push to main. It cannot merge its own work.
+spec:
+  model: gemini-3.1-pro
+  tools:
+    - read_repo_file
+    - propose_patch
+  scopes:
+    - repo:estate-gitops:read
+    - repo:estate-gitops:write-pr
+  blastRadius:
+    namespace: demo
+    maxFilesPerPatch: 3
+  budget:
+    maxTokensPerRun: 120000
+    maxToolCalls: 20
+  approval: required
+  circuitBreaker:
+    failuresBeforeOpen: 3
+    cooldownSeconds: 900

@@ -1,0 +1,25 @@
+apiVersion: warden.dev/v1
+kind: Agent
+metadata:
+  name: triage
+  description: >-
+    First responder. Dedupes against past incidents, scores severity, and decides
+    whether this signal is worth waking the rest of the fleet for. Most alerts
+    die here — that is the point.
+spec:
+  model: gemini-3.5-flash
+  tools:
+    - get_alert_context
+    - recall_similar_incidents
+  scopes:
+    - memory:incidents:read
+  blastRadius:
+    namespace: demo
+    maxFilesPerPatch: 0
+  budget:
+    maxTokensPerRun: 20000
+    maxToolCalls: 6
+  approval: auto
+  circuitBreaker:
+    failuresBeforeOpen: 5
+    cooldownSeconds: 300

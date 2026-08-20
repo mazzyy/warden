@@ -1,0 +1,26 @@
+apiVersion: warden.dev/v1
+kind: Agent
+metadata:
+  name: diagnostician
+  description: >-
+    Read-only investigator. Builds a hypothesis with an explicit evidence chain.
+    Holds no write scope of any kind — not to the cluster, not to the repo.
+spec:
+  model: gemini-3.1-pro
+  tools:
+    - describe_workload
+    - get_workload_logs
+    - recent_deploys
+    - query_metrics
+  scopes:
+    - cluster:demo:read
+  blastRadius:
+    namespace: demo
+    maxFilesPerPatch: 0
+  budget:
+    maxTokensPerRun: 120000
+    maxToolCalls: 25
+  approval: auto
+  circuitBreaker:
+    failuresBeforeOpen: 3
+    cooldownSeconds: 900

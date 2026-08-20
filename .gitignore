@@ -1,0 +1,25 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Never commit these. Secrets live in Secret Manager; .env is local only.
+.env
+*.pem
+*.key
+kubeconfig*
+service-account*.json
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+.terraform.lock.hcl
+
+# Dashboard build output
+warden/dashboard/web/node_modules/
+warden/dashboard/web/dist/

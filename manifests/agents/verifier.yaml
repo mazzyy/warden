@@ -1,0 +1,26 @@
+apiVersion: warden.dev/v1
+kind: Agent
+metadata:
+  name: verifier
+  description: >-
+    Watches SLOs after a merge and either closes the incident or opens a revert
+    PR. Can propose a revert; cannot apply one.
+spec:
+  model: gemini-3.5-flash
+  tools:
+    - query_metrics
+    - get_workload_status
+    - request_revert
+  scopes:
+    - cluster:demo:read
+    - repo:estate-gitops:write-pr
+  blastRadius:
+    namespace: demo
+    maxFilesPerPatch: 1
+  budget:
+    maxTokensPerRun: 40000
+    maxToolCalls: 15
+  approval: auto
+  circuitBreaker:
+    failuresBeforeOpen: 3
+    cooldownSeconds: 600
