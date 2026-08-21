@@ -25,7 +25,9 @@ from warden.models import AgentManifest, Run, RunStatus
 PRICE_PER_MTOK: dict[str, tuple[float, float]] = {
     # model: (input, output)
     "gemini-3.5-flash": (0.075, 0.30),
-    "gemini-3.1-pro": (1.25, 5.00),
+    "gemini-3.5-flash-lite": (0.04, 0.15),
+    "gemini-3.6-flash": (0.10, 0.40),
+    "gemini-3.7-flash": (0.15, 0.60),
 }
 _DEFAULT_PRICE = (0.50, 1.50)
 

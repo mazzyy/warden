@@ -11,7 +11,9 @@ to be got right exactly once:
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import re
 import uuid
 from typing import Any, TypeVar
 
@@ -57,7 +59,78 @@ class AgentRun:
         )
 
 
+RATE_LIMIT_MARKERS = ("RESOURCE_EXHAUSTED", "429", "ResourceExhausted")
+
+
+def _is_rate_limited(exc: Exception) -> bool:
+    """ADK raises a private _ResourceExhaustedError, so match on the message.
+
+    Catching a private class by import would break on any ADK release; the
+    error text is the stable surface here.
+    """
+    text = f"{type(exc).__name__} {exc}"
+    return any(marker in text for marker in RATE_LIMIT_MARKERS)
+
+
+def _retry_after(exc: Exception, attempt: int) -> float:
+    """Prefer the server's own retryDelay; fall back to exponential backoff."""
+    match = re.search(r"retry in (\d+(?:\.\d+)?)s", str(exc))
+    if match:
+        return min(float(match.group(1)) + 1.0, 90.0)
+    return min(5.0 * (2**attempt), 60.0)
+
+
 async def run_agent(
+    *,
+    manifest: AgentManifest,
+    toolbox: ToolBox,
+    store: Store,
+    incident_id: str,
+    prompt: str,
+    model_override: BaseLlm | str | None = None,
+    max_retries: int = 3,
+) -> AgentRun:
+    """Run one agent under governance, retrying through rate limits.
+
+    The retry is not politeness — it is a demo-reliability requirement. The
+    Gemini API free tier allows 5 requests per minute per model, and a single
+    incident makes 7-9 model calls back to back, so an unretried run fails
+    roughly every time. The hackathon forbids editing around a failure in the
+    demo video, which means a 429 mid-recording ends the take.
+
+    Vertex has proper quotas and is the right answer for the deployed service.
+    This exists so that a transient limit anywhere degrades into a pause rather
+    than a dead run.
+    """
+    last: Exception | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            return await _execute(
+                manifest=manifest,
+                toolbox=toolbox,
+                store=store,
+                incident_id=incident_id,
+                prompt=prompt,
+                model_override=model_override,
+            )
+        except Exception as exc:
+            last = exc
+            if not _is_rate_limited(exc) or attempt == max_retries:
+                raise
+            delay = _retry_after(exc, attempt)
+            log.warning(
+                "%s rate limited (attempt %d/%d) — waiting %.0fs. "
+                "Set GOOGLE_GENAI_USE_ENTERPRISE=1 to use Vertex and avoid the free-tier cap.",
+                manifest.name,
+                attempt + 1,
+                max_retries,
+                delay,
+            )
+            await asyncio.sleep(delay)
+    raise last  # unreachable; keeps type checkers happy
+
+
+async def _execute(
     *,
     manifest: AgentManifest,
     toolbox: ToolBox,

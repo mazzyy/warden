@@ -54,12 +54,24 @@ variable "node_count" {
 }
 
 variable "node_size" {
-  type    = string
-  # NOT a B-series. Microsoft does not support burstable VMs for AKS system
-  # node pools, and `az aks create` rejects them — this is the single most
-  # likely thing to fail on a first attempt. D2s_v5 is ~EUR 58 for 11 days,
-  # which against a EUR 1000 balance is noise.
-  default = "Standard_D2s_v5"
+  type = string
+
+  # Two independent constraints put us here, and both cause a 400 at create
+  # time rather than a plan-time error:
+  #
+  #   1. NOT a B-series. Microsoft does not support burstable VMs for AKS
+  #      system node pools.
+  #   2. Credit and sponsorship subscriptions carry a RESTRICTED SKU list that
+  #      varies by region. This one allows no _v5 D-series in germanywestcentral
+  #      at all — only _v7 and friends. Do not assume a common size exists.
+  #
+  # Check yours before changing this:
+  #   az vm list-skus --location germanywestcentral --resource-type virtualMachines \
+  #     --query "[?starts_with(name,'Standard_D2')].name" -o tsv
+  #
+  # D2s_v7 is 2 vCPU / 8 GB, ~EUR 60 for 11 days across two nodes — noise
+  # against a EUR 1000 balance.
+  default = "Standard_D2s_v7"
 }
 
 # --------------------------------------------------------------------------
@@ -92,8 +104,12 @@ resource "azurerm_kubernetes_cluster" "warden" {
     name       = "system"
     node_count = var.node_count
     vm_size    = var.node_size
-    # 30GB is well under the default and enough for one demo workload.
+    # 32GB is well under the default and enough for one demo workload.
     os_disk_size_gb = 32
+    # Explicit because D2s_v7 has no local temp disk, so AKS cannot fall back
+    # to an ephemeral OS disk. Leaving this to inference is how you get a
+    # second 400 after fixing the first one.
+    os_disk_type = "Managed"
   }
 
   identity {

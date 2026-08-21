@@ -43,3 +43,6 @@ check: lint test
 
 registry-sync:
 	./.venv/bin/python -c "import asyncio; from warden.control_plane.registry import load_all, sync_to_store; from warden.config import settings; asyncio.run(sync_to_store(load_all(settings().manifest_dir), settings().gcp_project))"
+
+models:
+	./.venv/bin/python -m warden.doctor --models

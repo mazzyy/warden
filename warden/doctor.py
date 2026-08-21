@@ -1,10 +1,17 @@
 """Preflight: what is configured, what is missing, what you can run right now.
 
-    python -m warden.doctor        (or: make doctor)
+    python -m warden.doctor            (or: make doctor)
+    python -m warden.doctor --models   list the model IDs your key can actually see
 
 Answers the only question that matters when you sit down: can I test this, and
-if not, exactly what is stopping me. Checks configuration only — it makes no
-network calls and spends nothing.
+if not, exactly what is stopping me. The default check makes no network calls and
+spends nothing; `--models` makes one metadata call, which is free.
+
+Why `--models` exists: ADK never validates a model ID. It regex-matches
+`gemini-.*` and hands the string to the API, so a wrong or unavailable ID fails
+at the first generate call — several layers into an agent run — rather than at
+construction. Checking the list first turns a confusing runtime error into a
+five-second lookup.
 """
 
 from __future__ import annotations
@@ -14,7 +21,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from warden.config import credential_mode, settings
+from warden.config import MODEL_FLASH, MODEL_PRO, credential_mode, settings
 
 GREEN, RED, YELLOW, DIM, BOLD, RESET = (
     "\033[32m", "\033[31m", "\033[33m", "\033[2m", "\033[1m", "\033[0m"
@@ -22,7 +29,47 @@ GREEN, RED, YELLOW, DIM, BOLD, RESET = (
 OK, WARN, FAIL = f"{GREEN}✓{RESET}", f"{YELLOW}○{RESET}", f"{RED}✗{RESET}"
 
 
+def list_models() -> int:
+    """Ask the API which models this credential can actually reach."""
+    wanted = {MODEL_FLASH, MODEL_PRO}
+
+    try:
+        from google import genai
+
+        from warden.config import configure_genai_env
+
+        configure_genai_env()
+        client = genai.Client()
+        names = sorted(
+            m.name.removeprefix("models/")
+            for m in client.models.list()
+            if "generateContent" in (getattr(m, "supported_actions", None) or ["generateContent"])
+        )
+    except Exception as exc:
+        print(f"\n{RED}could not list models: {type(exc).__name__}: {exc}{RESET}")
+        print(f"{DIM}check .env — see `python -m warden.doctor`{RESET}\n")
+        return 1
+
+    gemini = [n for n in names if n.startswith("gemini") or n.startswith("gemma")]
+    print(f"\n{BOLD}Models reachable with this credential{RESET} {DIM}({credential_mode()}){RESET}\n")
+    for name in gemini:
+        mark = f"{GREEN}← in use{RESET}" if name in wanted else ""
+        print(f"  {name} {mark}")
+
+    print(f"\n{BOLD}What the manifests ask for{RESET}")
+    for model in sorted(wanted):
+        if model in names:
+            print(f"  {OK} {model}")
+        else:
+            print(f"  {FAIL} {model} — NOT available. Update manifests/agents/*.yaml")
+    print()
+    return 0 if wanted <= set(names) else 1
+
+
 def main() -> int:
+    if "--models" in sys.argv:
+        return list_models()
+
     s = settings()
     offline_ok = True
     live_ok = True
@@ -77,7 +124,8 @@ def main() -> int:
             live_ok = False
         print(f"  {DIM}  note: Vertex also needs billing linked to {s.gcp_project}{RESET}")
     else:
-        if s.google_api_key.startswith("AIza"):
+        # AI Studio issues both AIza... and the newer AQ.... format.
+        if s.google_api_key.startswith(("AIza", "AQ.")):
             print(f"  {OK} GOOGLE_API_KEY set")
         elif s.google_api_key:
             print(f"  {WARN} GOOGLE_API_KEY set but does not look like an AI Studio key")

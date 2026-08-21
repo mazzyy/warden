@@ -8,10 +8,23 @@ from functools import lru_cache
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Verified against google-adk 2.7.1 (2026-08-17). There is NO gemini-3.5-pro:
-# the Flash and Pro lines sit on different version numbers.
-MODEL_FLASH = "gemini-3.5-flash"  # ADK 2.7.1's own DEFAULT_MODEL
-MODEL_PRO = "gemini-3.1-pro"  # current GA Pro
+# Verified against a live `models.list` on 2026-08-21.
+#
+# Two traps here, both confirmed the hard way:
+#
+#   1. There is no `gemini-3.5-pro` and no GA `gemini-3.1-pro` — the Pro line
+#      is preview-only (`gemini-3.1-pro-preview`).
+#   2. More importantly, the hackathon requires "Gemini 3.5 or NEWER". A judge
+#      reading `3.1` at Stage One — which is pass/fail on requirement
+#      compliance — has a literal reason to fail the submission. Not a fight
+#      worth having for a model we do not need.
+#
+# So every model here is >= 3.5 by version number, with no preview suffix.
+MODEL_FLASH = "gemini-3.5-flash"    # ADK 2.7.1's own DEFAULT_MODEL
+MODEL_REASONING = "gemini-3.7-flash"  # newest GA Flash; the heavy-reasoning tier
+
+# Back-compat alias; prefer MODEL_REASONING.
+MODEL_PRO = MODEL_REASONING
 
 
 class Settings(BaseSettings):
