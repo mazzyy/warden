@@ -125,3 +125,21 @@ async def test_dry_run_is_always_declared_in_the_result():
     out = await github.open_pull_request(title="t", body="b", changes={"a.yaml": "x"})
     assert out["dry_run"] is True
     assert "DRY-RUN" in out["pr_url"]
+
+
+@pytest.mark.asyncio
+async def test_a_broken_github_token_degrades_instead_of_crashing():
+    """An expired PAT must not take down a live incident mid-run.
+
+    This is a demo-survivability test. Before it existed, a bad token raised
+    out of read_repo_file and killed the whole incident with a stack trace —
+    on camera, that ends the take.
+    """
+    gh = GitHubClient(repo_full_name="mazzyy/estate-gitops", token="ghp_definitely_invalid")
+
+    result = await gh.read_file("apps/checkout-svc/deployment.yaml")
+    assert result["error"] == "github_read_failed"
+    assert "hint" in result
+
+    result = await gh.open_pull_request(title="t", body="b", changes={"a.yaml": "x"})
+    assert result["error"] == "github_open_pull_request_failed"

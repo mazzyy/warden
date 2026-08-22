@@ -61,6 +61,23 @@ class GitHubClient:
 
     # -- operations --------------------------------------------------------
 
+    @staticmethod
+    def _failure(action: str, exc: Exception) -> dict[str, Any]:
+        """Turn a GitHub failure into a result the agent can reason about.
+
+        Raising here would abort the whole incident: an expired token, a
+        revoked grant or a rate limit would take down a live demo mid-run with
+        a stack trace. Returning an error dict lets the agent say "I could not
+        read that file" and carry on, which is both more honest and survivable
+        on camera.
+        """
+        log.warning("github %s failed: %s", action, exc)
+        return {
+            "error": f"github_{action}_failed",
+            "detail": str(exc)[:300],
+            "hint": "check the PAT scope on estate-gitops and that it has not expired",
+        }
+
     async def read_file(self, path: str) -> dict[str, Any]:
         if self.dry_run:
             return {"path": path, "content": "", "dry_run": True, "note": "no token configured"}
@@ -69,7 +86,10 @@ class GitHubClient:
             f = self._repo_handle().get_contents(path, ref=self._base)
             return {"path": path, "content": f.decoded_content.decode(), "sha": f.sha}
 
-        return await asyncio.to_thread(_read)
+        try:
+            return await asyncio.to_thread(_read)
+        except Exception as exc:
+            return self._failure("read", exc)
 
     async def open_pull_request(
         self, *, title: str, body: str, changes: dict[str, str]
@@ -115,7 +135,10 @@ class GitHubClient:
                 "files_changed": list(changes),
             }
 
-        return await asyncio.to_thread(_open)
+        try:
+            return await asyncio.to_thread(_open)
+        except Exception as exc:
+            return self._failure("open_pull_request", exc)
 
     async def open_revert(self, *, pr_number: int, reason: str) -> dict[str, Any]:
         if self.dry_run:
@@ -147,4 +170,7 @@ class GitHubClient:
             )
             return {"dry_run": False, "pr_url": pr.html_url, "pr_number": pr.number}
 
-        return await asyncio.to_thread(_revert)
+        try:
+            return await asyncio.to_thread(_revert)
+        except Exception as exc:
+            return self._failure("open_revert", exc)

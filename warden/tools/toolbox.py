@@ -67,6 +67,18 @@ class ToolBox:
     def _ref(self, name: str, namespace: str | None = None) -> WorkloadRef:
         return WorkloadRef(namespace=namespace or self._namespace, name=name)
 
+    async def estate_status(self, name: str, namespace: str | None = None):
+        """Ground truth for the orchestrator, outside the agent loop.
+
+        Whether an incident is resolved is a fact about the cluster, not an
+        opinion the Verifier holds — so the orchestrator reads it directly
+        rather than trusting the model's summary.
+        """
+        try:
+            return await self._estate.get_workload_status(self._ref(name, namespace))
+        except Exception:
+            return None
+
     # -- context and memory ------------------------------------------------
 
     def _get_alert_context(self) -> Callable:

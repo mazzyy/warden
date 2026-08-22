@@ -17,7 +17,13 @@ import sys
 
 from warden.agents.fixtures import scripted_models
 from warden.agents.orchestrator import handle_incident
-from warden.config import CredentialError, configure_genai_env, credential_mode, settings
+from warden.config import (
+    CredentialError,
+    configure_genai_env,
+    credential_mode,
+    resolve_github_token,
+    settings,
+)
 from warden.control_plane.budget import estimate_usd
 from warden.control_plane.registry import load_all
 from warden.control_plane.store import InMemoryStore
@@ -47,7 +53,7 @@ ALERT = {
 }
 
 
-async def main(live: bool, mode: str) -> int:
+async def main(live: bool, mode: str, dry_run: bool, verify: bool) -> int:
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
     s = settings()
 
@@ -73,7 +79,14 @@ async def main(live: bool, mode: str) -> int:
         print(f"\n{RED}  ▸ injecting failure: {mode}{RESET}")
 
     store = InMemoryStore()
-    github = GitHubClient(repo_full_name=s.gitops_full_name, token=None)  # dry-run
+    # A token turns propose_patch into a REAL pull request on estate-gitops.
+    # Without one it stays dry-run — the loop still runs, you just get a
+    # described PR instead of a real one. --dry-run forces that either way.
+    token = None if dry_run else resolve_github_token()
+    github = GitHubClient(
+        repo_full_name=s.gitops_full_name, token=token, base_branch=s.gitops_base_branch
+    )
+    print(f"  pull req   {'LIVE — will open a real PR' if token else 'dry run'}")
     fleet = load_all(s.manifest_dir)
     toolbox = ToolBox(estate=estate, store=store, github=github, alert_context=ALERT)
 
@@ -81,7 +94,7 @@ async def main(live: bool, mode: str) -> int:
 
     # --- run -------------------------------------------------------------
     result = await handle_incident(
-        alert=ALERT, fleet=fleet, toolbox=toolbox, store=store, models=models
+        alert=ALERT, fleet=fleet, toolbox=toolbox, store=store, models=models, verify=verify
     )
 
     # --- what each agent did ---------------------------------------------
@@ -105,7 +118,10 @@ async def main(live: bool, mode: str) -> int:
 
     # --- the pull request -------------------------------------------------
     rule("PULL REQUEST")
-    if github.dry_run_prs:
+    if result.incident.pr_url:
+        print(f"  {GREEN}{result.incident.pr_url}{RESET}")
+        print(f"  {DIM}opened on {s.gitops_full_name} — go look at it{RESET}")
+    elif github.dry_run_prs:
         pr = github.dry_run_prs[0]
         print(f"  {BOLD}{pr.title}{RESET}")
         print(f"  {DIM}branch {pr.branch} · files: {', '.join(pr.changes)}{RESET}\n")
@@ -131,6 +147,8 @@ async def main(live: bool, mode: str) -> int:
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--live", action="store_true", help="use real Gemini instead of scripted models")
+    p.add_argument("--dry-run", action="store_true", help="never open a real PR, even with a token")
+    p.add_argument("--verify", action="store_true", help="also run the Verifier after remediation")
     p.add_argument(
         "--mode",
         default="bad_config",
@@ -138,4 +156,4 @@ if __name__ == "__main__":
         help="which failure to inject into the fake estate",
     )
     args = p.parse_args()
-    sys.exit(asyncio.run(main(args.live, args.mode)))
+    sys.exit(asyncio.run(main(args.live, args.mode, args.dry_run, args.verify)))

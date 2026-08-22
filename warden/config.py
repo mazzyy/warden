@@ -62,6 +62,12 @@ class Settings(BaseSettings):
     # account and set no key at all.
     google_api_key: str = Field(default="", alias="GOOGLE_API_KEY")
 
+    # Fine-grained PAT scoped to estate-gitops ONLY, with contents + pull
+    # requests write and nothing else. It deliberately cannot push to main —
+    # that is what makes "no agent can merge its own PR" true in the platform
+    # rather than only in the prompt. Empty means dry-run.
+    github_token: str = Field(default="", alias="GITHUB_TOKEN")
+
     # --- Secret Manager secret names (never the values) --------------------
     secret_github_token: str = Field(default="github-token", alias="SECRET_GITHUB_TOKEN")
     secret_aks_token: str = Field(default="aks-reader-token", alias="SECRET_AKS_TOKEN")
@@ -136,6 +142,26 @@ def configure_genai_env() -> None:
     # raise, so they are deliberately not exported on this path.
     for stale in ("GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION"):
         os.environ.pop(stale, None)
+
+
+def resolve_github_token() -> str | None:
+    """The PAT, from .env locally or Secret Manager when deployed.
+
+    Returns None for dry-run rather than raising, so the whole loop still runs
+    with no GitHub credential at all — you just get a described pull request
+    instead of a real one.
+    """
+    s = settings()
+    if s.github_token:
+        return s.github_token
+    try:
+        from google.cloud import secretmanager
+
+        client = secretmanager.SecretManagerServiceClient()
+        path = f"projects/{s.gcp_project}/secrets/{s.secret_github_token}/versions/latest"
+        return client.access_secret_version(name=path).payload.data.decode()
+    except Exception:
+        return None
 
 
 def credential_mode() -> str:

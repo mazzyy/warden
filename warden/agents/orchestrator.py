@@ -19,6 +19,7 @@ from warden.models import (
     Diagnosis,
     Incident,
     IncidentStatus,
+    ProposedPatch,
     TriageVerdict,
     utcnow,
 )
@@ -33,11 +34,16 @@ class IncidentResult:
         self.triage: AgentRun | None = None
         self.diagnosis: AgentRun | None = None
         self.remediation: AgentRun | None = None
+        self.verification: AgentRun | None = None
         self.stopped_at: str = ""
 
     @property
     def runs(self) -> list[AgentRun]:
-        return [r for r in (self.triage, self.diagnosis, self.remediation) if r]
+        return [
+            r
+            for r in (self.triage, self.diagnosis, self.remediation, self.verification)
+            if r
+        ]
 
     @property
     def total_tokens(self) -> int:
@@ -55,11 +61,16 @@ async def handle_incident(
     toolbox: ToolBox,
     store: Store,
     models: dict | None = None,
+    verify: bool = False,
 ) -> IncidentResult:
     """Run one signal through the fleet.
 
     `models` maps agent name to a model override, used for scripted/offline runs.
     In production it is None and each agent uses the model from its manifest.
+
+    `verify` runs the Verifier after remediation. Off by default because the
+    Verifier is only meaningful once a human has merged the pull request — the
+    GitHub webhook path sets it, the initial alert path does not.
     """
     models = models or {}
 
@@ -139,7 +150,47 @@ async def handle_incident(
         model_override=models.get("remediator"),
     )
 
+    patch = result.remediation.parse(ProposedPatch)
+    if patch and patch.pr_url:
+        incident.pr_url = patch.pr_url
+
     incident.status = IncidentStatus.awaiting_merge
     await store.put_incident(incident)
     log.info("%s awaiting merge", incident.id)
+
+    # -- 4. Verify ---------------------------------------------------------
+    # Only after a human merges. Running the Verifier before the merge would
+    # have it check a service nobody has fixed yet and open a revert for a
+    # change that was never applied.
+    if not verify:
+        return result
+
+    incident.status = IncidentStatus.verifying
+    await store.put_incident(incident)
+
+    result.verification = await run_agent(
+        manifest=fleet["verifier"],
+        toolbox=toolbox,
+        store=store,
+        incident_id=incident.id,
+        prompt=(
+            f"Incident {incident.id} has been patched and the change has synced.\n"
+            f"The fix was: {diagnosis.suggested_fix}\n"
+            f"The workload is {alert.get('workload', 'checkout-svc')} in namespace "
+            f"{alert.get('namespace', 'demo')}.\n\n"
+            "Check whether it actually recovered. If it did, say so. If it did not, "
+            "call request_revert with a clear reason."
+        ),
+        model_override=models.get("verifier"),
+    )
+
+    status = await toolbox.estate_status(alert.get("workload", "checkout-svc"))
+    if status is not None and status.healthy:
+        incident.status = IncidentStatus.resolved
+        incident.closed_at = utcnow()
+        log.info("%s resolved — %s", incident.id, status.summary)
+    else:
+        log.warning("%s still unhealthy after merge", incident.id)
+
+    await store.put_incident(incident)
     return result
