@@ -22,17 +22,20 @@ Two endpoints, because the loop has two halves that are hours apart:
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import json
 import logging
 import os
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import BackgroundTasks, FastAPI, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
-from warden.agents.orchestrator import handle_incident
+from warden.agents.orchestrator import handle_incident, verify_merged_incident
 from warden.config import configure_genai_env, resolve_github_token, settings
+from warden.control_plane.jsonl_store import JsonlStore
 from warden.control_plane.registry import load_all
 from warden.control_plane.store import FirestoreStore, InMemoryStore
 from warden.estate.base import build_adapter
@@ -51,11 +54,18 @@ async def lifespan(app: FastAPI):
     configure_genai_env()
 
     _ctx["fleet"] = load_all(s.manifest_dir)
-    _ctx["store"] = (
-        InMemoryStore()
-        if os.environ.get("WARDEN_STORE", "firestore") == "memory"
-        else FirestoreStore(project=s.gcp_project)
-    )
+    # Deployed this is Firestore. Locally it should be `jsonl`, so the server,
+    # `make demo-live` and `make dashboard` all see the same incidents — a
+    # webhook that verifies an incident the dashboard cannot see is only half
+    # connected.
+    kind = os.environ.get("WARDEN_STORE", "firestore")
+    if kind == "memory":
+        _ctx["store"] = InMemoryStore()
+    elif kind == "jsonl":
+        _ctx["store"] = JsonlStore()
+    else:
+        _ctx["store"] = FirestoreStore(project=s.gcp_project)
+    log.info("store: %s", kind)
     _ctx["estate"] = build_adapter(s.estate_adapter)
 
     token = resolve_github_token()
@@ -146,17 +156,82 @@ async def _handle(alert: dict, verify: bool = False) -> None:
         log.exception("incident handling failed for %r", alert.get("title"))
 
 
+def _signature_ok(secret: str, body: bytes, header: str | None) -> bool:
+    """Constant-time check of GitHub's X-Hub-Signature-256.
+
+    This endpoint starts agent runs. Without a signature check it is a remote
+    trigger for the fleet available to anyone who learns the URL — which, for a
+    service whose whole subject is bounded authority, is not a tidiness issue.
+    """
+    if not header or not header.startswith("sha256="):
+        return False
+    expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, header[len("sha256=") :])
+
+
+async def _verify_after_merge(pr_url: str) -> None:
+    """Run the Verifier alone. Deliberately NOT the whole pipeline.
+
+    This used to call `handle_incident(..., verify=True)`, which starts at
+    Triage. On a merge that is actively wrong: the fleet would open a fresh
+    incident for a workload that was just fixed, re-diagnose it, and could
+    propose a second pull request for a fault that no longer exists. The merge
+    is the END of an incident, not the start of one.
+    """
+    models = None
+    if settings().use_fixtures:
+        from warden.agents.fixtures import scripted_models
+
+        models = scripted_models()
+
+    try:
+        incident, run = await verify_merged_incident(
+            fleet=_ctx["fleet"],
+            toolbox=_toolbox({}),
+            store=_ctx["store"],
+            pr_url=pr_url,
+            models=models,
+        )
+        if incident is None:
+            log.warning("nothing to verify for %s", pr_url)
+            return
+        log.info(
+            "%s -> %s after merge (%d tokens)",
+            incident.id,
+            incident.status,
+            run.run.total_tokens if run else 0,
+        )
+    except Exception:
+        log.exception("post-merge verification failed for %s", pr_url)
+
+
 @app.post("/webhook/github")
 async def github_webhook(request: Request, background: BackgroundTasks) -> dict:
     """The other half of the loop: a human merged the pull request.
 
-    Only a merged PR on the base branch triggers verification. A closed-without-
-    merge PR means the reviewer rejected the fix, and verifying a change that
-    was never applied would have the Verifier open a revert for nothing.
+    Only a merged pull request on a warden branch triggers verification. A
+    closed-without-merge pull request means the reviewer rejected the fix, and
+    verifying a change that was never applied would have the Verifier open a
+    revert for nothing.
     """
-    event = request.headers.get("X-GitHub-Event", "")
-    body = await request.json()
+    raw = await request.body()
 
+    secret = settings().github_webhook_secret
+    if not secret:
+        # Fail closed. An unauthenticated endpoint that runs agents is worse
+        # than one that does not work, because the second failure is loud.
+        log.error("GITHUB_WEBHOOK_SECRET is not set — refusing webhook deliveries")
+        raise HTTPException(503, "webhook secret not configured")
+
+    if not _signature_ok(secret, raw, request.headers.get("X-Hub-Signature-256")):
+        log.warning("rejected a webhook delivery with a bad or missing signature")
+        raise HTTPException(401, "bad signature")
+
+    event = request.headers.get("X-GitHub-Event", "")
+    body = json.loads(raw)
+
+    if event == "ping":
+        return {"status": "pong"}
     if event != "pull_request" or body.get("action") != "closed":
         return {"status": "ignored", "event": event}
 
@@ -168,16 +243,9 @@ async def github_webhook(request: Request, background: BackgroundTasks) -> dict:
     if not branch.startswith("warden/"):
         return {"status": "ignored", "reason": f"not a warden branch: {branch}"}
 
+    pr_url = pr.get("html_url", "")
     log.info("PR #%s merged (%s) — verifying", pr.get("number"), branch)
-    alert = {
-        "source": "github",
-        "signature": "post-merge-verification",
-        "title": f"verify after merge of PR #{pr.get('number')}",
-        "workload": "checkout-svc",
-        "namespace": settings().estate_namespace,
-        "pr_url": pr.get("html_url"),
-    }
-    background.add_task(_handle, alert, True)
+    background.add_task(_verify_after_merge, pr_url)
     return {"status": "accepted", "pr": pr.get("number")}
 
 
@@ -187,5 +255,6 @@ async def healthz() -> dict:
         "status": "ok",
         "estate": settings().estate_adapter,
         "github": "live" if not _ctx["github"].dry_run else "dry-run",
+        "webhook": "armed" if settings().github_webhook_secret else "NOT CONFIGURED",
         "agents": sorted(_ctx["fleet"]),
     }

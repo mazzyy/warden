@@ -56,6 +56,7 @@ async def verify_merged_incident(
     toolbox: ToolBox,
     store: Store,
     incident_id: str | None = None,
+    pr_url: str | None = None,
     models: dict | None = None,
 ) -> tuple[Incident | None, AgentRun | None]:
     """Run the Verifier alone, against an incident whose patch has landed.
@@ -75,6 +76,16 @@ async def verify_merged_incident(
 
     if incident_id:
         incident = await store.get_incident(incident_id)
+    elif pr_url:
+        # Match the merged pull request back to the incident that opened it.
+        # "the most recent incident" is only correct when exactly one is in
+        # flight; with two open, a merge would close the wrong one and leave a
+        # real fault marked resolved.
+        candidates = await store.list_incidents(limit=50)
+        incident = next((i for i in candidates if i.pr_url == pr_url), None)
+        if incident is None:
+            log.warning("no incident found for %s — nothing to verify", pr_url)
+            return None, None
     else:
         recent = await store.list_incidents(limit=1)
         incident = recent[0] if recent else None

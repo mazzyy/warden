@@ -29,7 +29,7 @@ log = logging.getLogger("warden.config")
 #      availability is per-region. `gemini-3.7-flash` exists on the Gemini API
 #      but 404s on Vertex in europe-west3. Always check against the path you
 #      will actually deploy on: `python -m warden.doctor --models`.
-MODEL_FLASH = "gemini-3.5-flash"      # available on Vertex in europe-west3
+MODEL_FLASH = "gemini-3.5-flash"  # available on Vertex in europe-west3
 MODEL_REASONING = "gemini-3.5-flash"  # same, until a newer one is confirmed there
 
 # Back-compat alias; prefer MODEL_REASONING.
@@ -95,6 +95,12 @@ class Settings(BaseSettings):
     #
     # The private key is a PATH, never the key itself: a PEM in .env gets
     # shoulder-surfed, pasted into chat, and committed by accident.
+    # Shared secret GitHub signs webhook deliveries with. Without it the
+    # /webhook/github endpoint accepts any POST from anyone who learns the URL,
+    # and that endpoint starts agent runs — so an unauthenticated one is a
+    # remote trigger for the fleet, not merely an untidy default.
+    github_webhook_secret: str = Field(default="", alias="GITHUB_WEBHOOK_SECRET")
+
     github_app_id: str = Field(default="", alias="GITHUB_APP_ID")
     github_app_installation_id: str = Field(default="", alias="GITHUB_APP_INSTALLATION_ID")
     github_app_private_key_path: str = Field(default="", alias="GITHUB_APP_PRIVATE_KEY_PATH")
@@ -348,7 +354,9 @@ def resolve_github_credential() -> GitHubCredential:
 
     token = resolve_github_token()
     if token:
-        return GitHubCredential(kind="pat", label="personal access token", enforced=False, token=token)
+        return GitHubCredential(
+            kind="pat", label="personal access token", enforced=False, token=token
+        )
     return GitHubCredential(kind="none", label="dry run — no GitHub credential", enforced=False)
 
 

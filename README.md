@@ -35,7 +35,7 @@ Until that is done, Warden says so out loud: the demo header prints `boundary: N
 
 One incident type has been fixed end to end against real infrastructure. A second is built and has never been run live. See [What it can actually fix](#what-it-can-actually-fix).
 
-104 tests pass. No cloud project, API key or spend is required to run them.
+119 tests pass. No cloud project, API key or spend is required to run them.
 
 ---
 
@@ -251,7 +251,7 @@ That exits non-zero if any agent in the fleet can reach a cluster write. It runs
 **The test suite.**
 
 ```bash
-make test     # 104 tests
+make test     # 119 tests
 make check    # lint, tests, and the no-cluster-writes assertion
 ```
 
@@ -349,7 +349,9 @@ cd ../warden
 ./.venv/bin/python -m warden.agents.demo --live --verify-only
 ```
 
-Step 5 exists because the merge is a human action that happens after the demo process has exited. By the time verifying means anything, the process that would have done it is long gone. `--verify-only` runs the verifier alone against the last incident in the store, which is also what the GitHub webhook path does in production.
+Step 5 exists because the merge is a human action that happens after the demo process has exited. By the time verifying means anything, the process that would have done it is long gone. `--verify-only` runs the verifier alone against the last incident in the store.
+
+To make the merge itself wake the verifier — no step 5 at all — run `warden/server.py`, expose it, and add a webhook on `estate-gitops`. That is [`docs/WEBHOOK.md`](docs/WEBHOOK.md), and it takes about ten minutes.
 
 `./scripts/inject.sh restore` puts the estate back to known-good. Run it before every take.
 
@@ -425,7 +427,7 @@ warden/
   infra/gcp/              Firestore, Pub/Sub, Artifact Registry, six service accounts
   docs/SETUP.md           cloud setup, verified command by command
   docs/IDENTITY.md        who the agent writes as, and why it matters
-  tests/                  104 tests across 11 files
+  tests/                  119 tests across 12 files
 ```
 
 The orchestrator is deliberately plain Python rather than an ADK multi-agent delegation tree. Each agent gets its own run, its own budget and its own audit trail, and the handoffs between them are explicit and inspectable. When the demo is a live break-and-fix on camera, being able to point at exactly what happened and when is worth more than elegance.
