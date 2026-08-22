@@ -42,11 +42,25 @@ log = logging.getLogger("warden.estate.aks")
 
 @lru_cache
 def _secret(name: str) -> str | None:
-    """Read a secret from Google Secret Manager, falling back to the environment.
+    """Resolve a cluster credential: .env, then environment, then Secret Manager.
 
-    Only sa-proxy holds roles/secretmanager.secretAccessor, so an agent process
-    calling this will fail — by design.
+    The .env path exists so the real cluster can be used before any GCP
+    infrastructure is provisioned. Note it must be read through Settings —
+    pydantic-settings loads .env into the Settings object but NOT into
+    os.environ, so checking os.environ alone silently misses it.
+
+    In production these are empty and the value comes from Secret Manager,
+    where only sa-proxy holds secretAccessor — so an agent process calling this
+    fails, by design.
     """
+    s = settings()
+    direct = {
+        s.secret_aks_apiserver: s.aks_apiserver,
+        s.secret_aks_token: s.aks_reader_token,
+    }.get(name)
+    if direct:
+        return direct
+
     env_key = name.upper().replace("-", "_")
     if os.environ.get(env_key):
         return os.environ[env_key]
@@ -162,6 +176,8 @@ class AksAdapter:
                 replicas_desired=dep.spec.replicas or 0,
                 replicas_ready=dep.status.ready_replicas or 0,
                 image=container.image,
+                command=list(container.command or []),
+                args=list(container.args or []),
                 containers=containers,
                 env=env,
                 resources=resources,

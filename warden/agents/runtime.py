@@ -148,7 +148,9 @@ async def _execute(
     ledger = BudgetLedger(run, manifest)
     await store.put_run(run)
 
-    tools = toolbox.build(manifest.spec.tools)
+    tools = toolbox.build(
+        manifest.spec.tools, max_changed_lines=manifest.spec.blast_radius.max_changed_lines
+    )
     agent = build_agent(manifest, tools, model_override=model_override)
 
     plugin = WardenPolicyPlugin(

@@ -14,6 +14,7 @@ import argparse
 import asyncio
 import logging
 import sys
+import warnings
 
 from warden.agents.fixtures import scripted_models
 from warden.agents.orchestrator import handle_incident
@@ -54,6 +55,20 @@ ALERT = {
 
 
 async def main(live: bool, mode: str, dry_run: bool, verify: bool) -> int:
+    # The google-genai and ADK SDKs emit UserWarnings on every run about
+    # experimental features and non-text response parts. Both are cosmetic and
+    # both clutter a screen recording. Suppressed here, at the entry point
+    # only — library code still warns.
+    warnings.filterwarnings("ignore", category=UserWarning, module="google.*")
+    # The AKS adapter skips TLS verification (no cluster CA), so urllib3 warns
+    # on every single call — 25 lines of it in one incident. The trade-off is
+    # real and documented in estate/aks.py; the repetition just buries output.
+    try:
+        import urllib3
+
+        warnings.filterwarnings("ignore", category=urllib3.exceptions.InsecureRequestWarning)
+    except Exception:
+        pass
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
     s = settings()
 

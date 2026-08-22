@@ -50,8 +50,9 @@ class ToolBox:
 
     # -- assembly ----------------------------------------------------------
 
-    def build(self, tool_names: list[str]) -> list[Callable]:
+    def build(self, tool_names: list[str], *, max_changed_lines: int = 0) -> list[Callable]:
         """Return the callables for the tools a manifest grants."""
+        self._max_changed_lines = max_changed_lines
         factories = {
             "get_alert_context": self._get_alert_context,
             "recall_similar_incidents": self._recall_similar_incidents,
@@ -60,6 +61,7 @@ class ToolBox:
             "recent_deploys": self._recent_deploys,
             "query_metrics": self._query_metrics,
             "get_workload_status": self._get_workload_status,
+            "list_repo_files": self._list_repo_files,
             "read_repo_file": self._read_repo_file,
             "propose_patch": self._propose_patch,
             "request_revert": self._request_revert,
@@ -230,11 +232,33 @@ class ToolBox:
 
     # -- the write path: pull requests only --------------------------------
 
+    def _list_repo_files(self) -> Callable:
+        gh = self._github
+
+        async def list_repo_files(prefix: str = "") -> dict:
+            """List the files in the GitOps repository.
+
+            Call this BEFORE read_repo_file rather than guessing a path. A live
+            run showed the remediator probing four candidate paths and 404ing on
+            two of them, which cost more tokens than the rest of the incident.
+
+            Args:
+                prefix: Optional path prefix to filter by, e.g. "apps/".
+            """
+            if gh is None:
+                return {"error": "no GitHub client configured"}
+            return await gh.list_files(prefix)
+
+        return list_repo_files
+
     def _read_repo_file(self) -> Callable:
         gh = self._github
 
         async def read_repo_file(path: str) -> dict:
             """Read a file from the GitOps repository.
+
+            Use list_repo_files first to find the exact path. Guessing wastes a
+            round trip and returns a 404 error dict, not the file.
 
             Args:
                 path: Repository-relative path, e.g. "apps/checkout-svc/deployment.yaml".
@@ -247,6 +271,7 @@ class ToolBox:
 
     def _propose_patch(self) -> Callable:
         gh = self._github
+        max_lines = getattr(self, "_max_changed_lines", 0)
 
         async def propose_patch(
             title: str, rationale: str, files: list[str], contents: list[str]
@@ -268,7 +293,10 @@ class ToolBox:
             if len(files) != len(contents):
                 return {"error": f"files ({len(files)}) and contents ({len(contents)}) differ in length"}
             return await gh.open_pull_request(
-                title=title, body=rationale, changes=dict(zip(files, contents, strict=True))
+                title=title,
+                body=rationale,
+                changes=dict(zip(files, contents, strict=True)),
+                max_changed_lines=max_lines,
             )
 
         return propose_patch

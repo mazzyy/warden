@@ -73,6 +73,11 @@ CATALOG: dict[str, ToolSpec] = {
             description="Health rollup for a workload.",
         ),
         ToolSpec(
+            name="list_repo_files",
+            scopes=frozenset({READ_REPO}),
+            description="List paths in the GitOps repository, so an agent need not guess them.",
+        ),
+        ToolSpec(
             name="read_repo_file",
             scopes=frozenset({READ_REPO}),
             description="Read a file from the GitOps repository.",

@@ -12,6 +12,7 @@ result precisely so it is impossible to show a fake PR on camera by accident.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from dataclasses import dataclass
 from datetime import datetime
@@ -78,6 +79,26 @@ class GitHubClient:
             "hint": "check the PAT scope on estate-gitops and that it has not expired",
         }
 
+    async def list_files(self, prefix: str = "") -> dict[str, Any]:
+        if self.dry_run:
+            return {
+                "paths": ["apps/checkout-svc/deployment.yaml", "apps/checkout-svc/service.yaml"],
+                "dry_run": True,
+            }
+
+        def _list():
+            repo = self._repo_handle()
+            tree = repo.get_git_tree(self._base, recursive=True)
+            paths = [e.path for e in tree.tree if e.type == "blob"]
+            if prefix:
+                paths = [p for p in paths if p.startswith(prefix)]
+            return {"paths": sorted(paths)[:200], "count": len(paths)}
+
+        try:
+            return await asyncio.to_thread(_list)
+        except Exception as exc:
+            return self._failure("list", exc)
+
     async def read_file(self, path: str) -> dict[str, Any]:
         if self.dry_run:
             return {"path": path, "content": "", "dry_run": True, "note": "no token configured"}
@@ -92,7 +113,7 @@ class GitHubClient:
             return self._failure("read", exc)
 
     async def open_pull_request(
-        self, *, title: str, body: str, changes: dict[str, str]
+        self, *, title: str, body: str, changes: dict[str, str], max_changed_lines: int = 0
     ) -> dict[str, Any]:
         branch = self._branch_name(title)
         signed_body = (
@@ -117,8 +138,49 @@ class GitHubClient:
             repo = self._repo_handle()
             base_sha = repo.get_branch(self._base).commit.sha
             repo.create_git_ref(ref=f"refs/heads/{branch}", sha=base_sha)
+
+            written: list[str] = []
+            unchanged: list[str] = []
             for path, content in changes.items():
                 existing = repo.get_contents(path, ref=branch)
+                # Compare before writing. Passing identical content to
+                # update_file produces a commit with an EMPTY diff, and then a
+                # pull request that claims to fix something and changes
+                # nothing. That is worse than failing: it looks like success.
+                current = existing.decoded_content.decode()
+                if current == content:
+                    unchanged.append(path)
+                    continue
+
+                if max_changed_lines:
+                    import difflib
+
+                    delta = sum(
+                        1
+                        for line in difflib.unified_diff(
+                            current.splitlines(), content.splitlines(), n=0
+                        )
+                        if line.startswith(("+", "-")) and not line.startswith(("+++", "---"))
+                    )
+                    if delta > max_changed_lines:
+                        with contextlib.suppress(Exception):
+                            repo.get_git_ref(f"heads/{branch}").delete()
+                        log.warning(
+                            "patch to %s changes %d lines, over the %d-line blast radius",
+                            path, delta, max_changed_lines,
+                        )
+                        return {
+                            "error": "patch_exceeds_blast_radius",
+                            "detail": (
+                                f"The proposed change to {path} touches {delta} lines, but this "
+                                f"agent's blastRadius allows {max_changed_lines}. Remediate the "
+                                "specific failure described in the incident and change nothing "
+                                "else. If the file genuinely needs a larger rewrite, that is a "
+                                "human's call, not yours."
+                            ),
+                            "changed_lines": delta,
+                            "limit": max_changed_lines,
+                        }
                 repo.update_file(
                     path=path,
                     message=f"fix: {title}",
@@ -126,13 +188,33 @@ class GitHubClient:
                     sha=existing.sha,
                     branch=branch,
                 )
+                written.append(path)
+
+            if not written:
+                # Nothing to propose. Clean up the branch rather than leaving
+                # an orphan, and tell the agent plainly.
+                with contextlib.suppress(Exception):
+                    repo.get_git_ref(f"heads/{branch}").delete()
+                log.warning("no-op patch: %s already match the proposed content", unchanged)
+                return {
+                    "error": "no_changes_needed",
+                    "detail": (
+                        f"{', '.join(unchanged)} already contains exactly the proposed "
+                        "content, so there is nothing to change. The file in the "
+                        "repository may already be correct, or the estate you diagnosed "
+                        "may be out of sync with the repository."
+                    ),
+                    "files_unchanged": unchanged,
+                }
+
             pr = repo.create_pull(title=title, body=signed_body, head=branch, base=self._base)
             return {
                 "dry_run": False,
                 "pr_url": pr.html_url,
                 "pr_number": pr.number,
                 "branch": branch,
-                "files_changed": list(changes),
+                "files_changed": written,
+                "files_unchanged": unchanged,
             }
 
         try:

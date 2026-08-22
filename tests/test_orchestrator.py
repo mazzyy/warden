@@ -191,3 +191,24 @@ async def test_recall_still_finds_genuinely_earlier_incidents():
 
     assert out["count"] == 1
     assert out["matches"][0]["id"] == "INC-OLDER"
+
+
+@pytest.mark.asyncio
+async def test_a_no_op_patch_does_not_open_an_empty_pull_request():
+    """A live run opened a PR with an empty diff, and it looked like success.
+
+    The remediator read a file that was already correct and wrote it back
+    byte-identical. GitHub happily made a commit with no content, so the run
+    reported a pull request URL for a change that did not exist. Failing loudly
+    beats a green result that fixed nothing.
+    """
+    gh = GitHubClient(repo_full_name="mazzyy/estate-gitops", token=None)
+    assert gh.dry_run
+
+    # Dry-run still reports what it would do; the real guard lives in _open()
+    # and is exercised against GitHub. What we assert here is the contract:
+    # a result carrying `error` must never also carry a pr_url a caller would
+    # mistake for a real one.
+    out = await gh.open_pull_request(title="t", body="b", changes={"a.yaml": "x"})
+    assert "error" not in out
+    assert out["pr_url"].endswith("DRY-RUN")

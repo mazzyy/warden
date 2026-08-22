@@ -16,6 +16,7 @@ spec:
   blastRadius:
     namespace: demo
     maxFilesPerPatch: 0
+    maxChangedLines: 0
   budget:
     maxTokensPerRun: 20000
     maxToolCalls: 6

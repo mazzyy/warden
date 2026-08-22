@@ -9,6 +9,7 @@ metadata:
 spec:
   model: gemini-3.5-flash
   tools:
+    - list_repo_files
     - read_repo_file
     - propose_patch
   scopes:
@@ -17,6 +18,9 @@ spec:
   blastRadius:
     namespace: demo
     maxFilesPerPatch: 3
+    # A config fix is a handful of lines. Anything larger is a rewrite and
+    # is refused at the write path — see tools/github_client.py.
+    maxChangedLines: 12
   budget:
     maxTokensPerRun: 120000
     maxToolCalls: 20

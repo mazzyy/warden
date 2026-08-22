@@ -72,6 +72,13 @@ class Settings(BaseSettings):
     # rather than only in the prompt. Empty means dry-run.
     github_token: str = Field(default="", alias="GITHUB_TOKEN")
 
+    # Direct cluster credentials, for local development before Secret Manager
+    # exists. Deployed services leave these empty and read from Secret Manager
+    # as sa-proxy. The token is the READ-ONLY ServiceAccount token from
+    # estate-gitops/rbac/warden-reader.yaml — it cannot mutate anything.
+    aks_apiserver: str = Field(default="", alias="AKS_APISERVER")
+    aks_reader_token: str = Field(default="", alias="AKS_READER_TOKEN")
+
     # --- Secret Manager secret NAMES (never the values) --------------------
     # These are lookup keys like "github-token", not credentials. The naming is
     # genuinely confusable, so `_reject_secrets_in_name_fields` below catches a

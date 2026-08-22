@@ -87,6 +87,8 @@ class FakeAdapter:
 
         return WorkloadDetail(
             ref=ref,
+            command=["python", "-u", "-c"],
+            args=["<inline service: validates PAYMENT_ENDPOINT, serves :8080>"],
             replicas_desired=3,
             replicas_ready=3 if self.mode == "healthy" else 0,
             image="ghcr.io/mazzyy/checkout-svc:1.4.2",

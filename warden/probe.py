@@ -48,6 +48,7 @@ TOOL_PROBE_ARGS: dict[str, dict] = {
     "recent_deploys": _WORKLOAD,
     "query_metrics": {**_WORKLOAD, "metric": "error_rate"},
     "get_workload_status": _WORKLOAD,
+    "list_repo_files": {"prefix": "apps/"},
     "read_repo_file": {"path": "apps/checkout-svc/deployment.yaml"},
     "propose_patch": _PATCH,
     "request_revert": {"namespace": "demo", "pr_number": 1, "reason": "probe"},

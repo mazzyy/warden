@@ -148,3 +148,30 @@ def test_redaction_drops_the_tool_context(fleet):
     cleaned = policy.redact("propose_patch", {"namespace": "demo", "tool_context": object()})
     assert "tool_context" not in cleaned
     assert cleaned["namespace"] == "demo"
+
+
+# --------------------------------------------------------------------------
+# Blast radius by line count.
+#
+# A live run against the real cluster produced a pull request that fixed the
+# actual bug AND replaced the container image with one that does not exist,
+# deleting 39 lines of working entrypoint on the way. Merging it would have
+# broken the cluster worse than the incident did. maxFilesPerPatch did not
+# catch it — the damage was inside a single permitted file.
+# --------------------------------------------------------------------------
+
+
+def test_every_writing_agent_has_a_line_level_blast_radius(fleet):
+    for name, manifest in fleet.items():
+        limit = manifest.spec.blast_radius.max_changed_lines
+        can_write = any("write" in scope for scope in manifest.spec.scopes)
+        if can_write:
+            assert limit > 0, f"{name} can open pull requests but may rewrite a file freely"
+            assert limit <= 40, f"{name} may change {limit} lines; that is a rewrite, not a fix"
+        else:
+            assert limit == 0, f"{name} holds no write scope but carries a line budget"
+
+
+def test_the_remediator_is_capped_tightly(fleet):
+    """The remediator is the only agent that writes. Its cap is the real one."""
+    assert fleet["remediator"].spec.blast_radius.max_changed_lines <= 20

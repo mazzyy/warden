@@ -47,6 +47,11 @@ class WorkloadDetail(BaseModel):
     replicas_desired: int = 0
     replicas_ready: int = 0
     image: str = ""
+    # Without these an agent sees a bare base image, concludes the image is
+    # misconfigured, and proposes replacing it — a live run did exactly that
+    # and produced a pull request that would have broken the cluster.
+    command: list[str] = Field(default_factory=list)
+    args: list[str] = Field(default_factory=list)
     containers: list[ContainerState] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
     resources: dict[str, Any] = Field(default_factory=dict)
@@ -93,6 +98,10 @@ class Status(BaseModel):
 class BlastRadius(BaseModel):
     namespace: str = "demo"
     max_files_per_patch: int = Field(default=3, alias="maxFilesPerPatch")
+    # A patch that rewrites half a file is not a remediation, whatever the
+    # rationale says. Enforced at the write path, where the current contents
+    # are available to diff against.
+    max_changed_lines: int = Field(default=20, alias="maxChangedLines")
     model_config = {"populate_by_name": True}
 
 
