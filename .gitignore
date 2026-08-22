@@ -1,0 +1,31 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Never commit these. Secrets live in Secret Manager; .env is local only.
+# .env.* catches backups too — a .env.bak made while editing still holds the
+# token, and `git add .` does not care that you meant it as a scratch file.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+kubeconfig*
+service-account*.json
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+.terraform.lock.hcl
+
+# Dashboard build output
+warden/dashboard/web/node_modules/
+warden/dashboard/web/dist/
+
+.env copy
