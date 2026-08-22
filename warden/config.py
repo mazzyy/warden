@@ -20,8 +20,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 #      worth having for a model we do not need.
 #
 # So every model here is >= 3.5 by version number, with no preview suffix.
-MODEL_FLASH = "gemini-3.5-flash"    # ADK 2.7.1's own DEFAULT_MODEL
-MODEL_REASONING = "gemini-3.7-flash"  # newest GA Flash; the heavy-reasoning tier
+#   3. The Gemini API and Vertex have DIFFERENT catalogs, and Vertex
+#      availability is per-region. `gemini-3.7-flash` exists on the Gemini API
+#      but 404s on Vertex in europe-west3. Always check against the path you
+#      will actually deploy on: `python -m warden.doctor --models`.
+MODEL_FLASH = "gemini-3.5-flash"      # available on Vertex in europe-west3
+MODEL_REASONING = "gemini-3.5-flash"  # same, until a newer one is confirmed there
 
 # Back-compat alias; prefer MODEL_REASONING.
 MODEL_PRO = MODEL_REASONING

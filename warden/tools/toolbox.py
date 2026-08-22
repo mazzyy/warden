@@ -39,6 +39,14 @@ class ToolBox:
         self._github = github
         self._namespace = namespace
         self._alert = alert_context or {}
+        # Set by the orchestrator once the incident exists. Without it,
+        # recall_similar_incidents returns the incident currently being
+        # triaged and the agent correctly concludes it is a duplicate of
+        # itself — closing the very incident it was asked to open.
+        self._current_incident_id: str | None = None
+
+    def bind_incident(self, incident_id: str) -> None:
+        self._current_incident_id = incident_id
 
     # -- assembly ----------------------------------------------------------
 
@@ -95,9 +103,13 @@ class ToolBox:
 
     def _recall_similar_incidents(self) -> Callable:
         store = self._store
+        box = self
 
         async def recall_similar_incidents(signature: str) -> dict:
-            """Find past incidents with a matching signature.
+            """Find PAST incidents with a matching signature.
+
+            Excludes the incident currently being triaged. Returns an empty
+            list when this failure has not been seen before.
 
             Args:
                 signature: A short stable string identifying the failure mode,
@@ -113,7 +125,9 @@ class ToolBox:
                     "pr_url": i.pr_url,
                 }
                 for i in incidents
-                if signature.lower() in i.signature.lower()
+                # The self-exclusion is the whole point. See bind_incident.
+                if i.id != box._current_incident_id
+                and signature.lower() in i.signature.lower()
             ]
             return {"matches": matches, "count": len(matches)}
 

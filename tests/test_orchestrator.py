@@ -143,3 +143,51 @@ async def test_a_broken_github_token_degrades_instead_of_crashing():
 
     result = await gh.open_pull_request(title="t", body="b", changes={"a.yaml": "x"})
     assert result["error"] == "github_open_pull_request_failed"
+
+
+@pytest.mark.asyncio
+async def test_triage_cannot_recall_its_own_incident():
+    """A live run caught this: triage closed an incident as a duplicate of itself.
+
+    The orchestrator persists the incident before any agent runs, so an
+    unfiltered recall returns the very incident being triaged. The model then
+    reasons correctly from a tool that lied to it — which is the worst kind of
+    bug, because nothing looks wrong.
+    """
+    store = InMemoryStore()
+    toolbox = ToolBox(estate=FakeAdapter("bad_config"), store=store, alert_context=ALERT)
+    fleet = load_all("manifests/agents")
+
+    result = await handle_incident(
+        alert=ALERT, fleet=fleet, toolbox=toolbox, store=store, models=scripted_models()
+    )
+
+    # The scripted triage escalates; a self-recall would have abandoned it.
+    assert result.incident.status is not IncidentStatus.abandoned
+    verdict = result.triage.parse(TriageVerdict)
+    assert verdict.duplicate_of != result.incident.id, "recalled itself as a precedent"
+
+
+@pytest.mark.asyncio
+async def test_recall_still_finds_genuinely_earlier_incidents():
+    """Self-exclusion must not break the feature it protects."""
+    from warden.models import Incident
+    from warden.models import IncidentStatus as St
+
+    store = InMemoryStore()
+    await store.put_incident(
+        Incident(
+            id="INC-OLDER",
+            source="cloud-monitoring",
+            signature="checkout-svc/CrashLoopBackOff",
+            status=St.resolved,
+        )
+    )
+    toolbox = ToolBox(estate=FakeAdapter(), store=store, alert_context=ALERT)
+    toolbox.bind_incident("INC-CURRENT")
+
+    recall = toolbox.build(["recall_similar_incidents"])[0]
+    out = await recall(signature="checkout-svc/CrashLoopBackOff")
+
+    assert out["count"] == 1
+    assert out["matches"][0]["id"] == "INC-OLDER"

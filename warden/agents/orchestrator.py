@@ -82,6 +82,9 @@ async def handle_incident(
         workload=None,
     )
     await store.put_incident(incident)
+    # Before any agent runs. The incident is already persisted at this point,
+    # so recall would otherwise hand triage its own incident back.
+    toolbox.bind_incident(incident.id)
     result = IncidentResult(incident)
     log.info("opened %s — %s", incident.id, incident.title)
 

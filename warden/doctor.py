@@ -51,7 +51,16 @@ def list_models() -> int:
         return 1
 
     gemini = [n for n in names if n.startswith("gemini") or n.startswith("gemma")]
-    print(f"\n{BOLD}Models reachable with this credential{RESET} {DIM}({credential_mode()}){RESET}\n")
+    s = settings()
+    where = (
+        f"Vertex · {s.gcp_location}" if s.use_vertex else "Gemini API"
+    )
+    print(f"\n{BOLD}Models reachable with this credential{RESET} {DIM}({credential_mode()}){RESET}")
+    print(
+        f"{YELLOW}  This list is specific to {where}. The Gemini API and Vertex have{RESET}\n"
+        f"{YELLOW}  DIFFERENT catalogs, and Vertex availability varies BY REGION — a model{RESET}\n"
+        f"{YELLOW}  listed here on one path can 404 on the other. Check on the path you deploy.{RESET}\n"
+    )
     for name in gemini:
         mark = f"{GREEN}← in use{RESET}" if name in wanted else ""
         print(f"  {name} {mark}")
