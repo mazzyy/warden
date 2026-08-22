@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Verified against a live `models.list` on 2026-08-21.
@@ -68,10 +68,40 @@ class Settings(BaseSettings):
     # rather than only in the prompt. Empty means dry-run.
     github_token: str = Field(default="", alias="GITHUB_TOKEN")
 
-    # --- Secret Manager secret names (never the values) --------------------
+    # --- Secret Manager secret NAMES (never the values) --------------------
+    # These are lookup keys like "github-token", not credentials. The naming is
+    # genuinely confusable, so `_reject_secrets_in_name_fields` below catches a
+    # token pasted here and says exactly what to do instead.
     secret_github_token: str = Field(default="github-token", alias="SECRET_GITHUB_TOKEN")
     secret_aks_token: str = Field(default="aks-reader-token", alias="SECRET_AKS_TOKEN")
     secret_aks_apiserver: str = Field(default="aks-apiserver", alias="SECRET_AKS_APISERVER")
+
+    @model_validator(mode="after")
+    def _reject_secrets_in_name_fields(self) -> Settings:
+        """Catch a credential pasted into a *_NAME field.
+
+        Without this the failure is silent and baffling: the real token sits in
+        .env in plain sight while the code looks up a Secret Manager secret
+        named `github_pat_...`, finds nothing, and quietly runs in dry-run. You
+        would spend an hour wondering why no pull request appeared.
+        """
+        prefixes = ("github_pat_", "ghp_", "gho_", "ghs_", "ghu_", "AIza", "AQ.")
+        checks = {
+            "SECRET_GITHUB_TOKEN": (self.secret_github_token, "GITHUB_TOKEN"),
+            "SECRET_AKS_TOKEN": (self.secret_aks_token, "the Secret Manager secret name"),
+            "SECRET_AKS_APISERVER": (self.secret_aks_apiserver, "the API server URL"),
+        }
+        for env_name, (value, correct) in checks.items():
+            if value.startswith(prefixes) or len(value) > 80:
+                raise ValueError(
+                    f"\n\n  {env_name} holds what looks like a credential, but it is a "
+                    f"Secret Manager secret NAME, not a value.\n\n"
+                    f"  In .env, set:\n"
+                    f"      {env_name}=github-token        <- the lookup key\n"
+                    f"      {correct}=<your actual token>\n\n"
+                    f"  Nothing is leaked — .env is gitignored. Just move the value.\n"
+                )
+        return self
 
     # --- Budget guards ----------------------------------------------------
     # Enforced by the proxy. These are the ones that keep a runaway loop from
@@ -99,6 +129,24 @@ class CredentialError(RuntimeError):
     pass
 
 
+def _have_adc() -> bool:
+    """Whether Application Default Credentials can be resolved at all.
+
+    Covers all three sources google-auth would use: the well-known ADC file
+    from `gcloud auth application-default login`, an explicit
+    GOOGLE_APPLICATION_CREDENTIALS, and the metadata server on Cloud Run.
+    """
+    if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
+        return True
+    try:
+        import google.auth
+
+        google.auth.default()
+        return True
+    except Exception:
+        return False
+
+
 def configure_genai_env() -> None:
     """Put model routing into os.environ before any google-genai client is built.
 
@@ -123,6 +171,20 @@ def configure_genai_env() -> None:
     if s.use_vertex:
         os.environ.setdefault("GOOGLE_CLOUD_PROJECT", s.gcp_project)
         os.environ.setdefault("GOOGLE_CLOUD_LOCATION", s.gcp_location)
+
+        # Fail here, not four layers into an agent run. Without this check the
+        # missing-credential error surfaces from inside ADK's node runner and
+        # arrives as ~400 lines of stack trace with the one useful sentence at
+        # the bottom. Preflighting costs nothing and turns it into one line.
+        if not _have_adc():
+            raise CredentialError(
+                "No Google credentials found for Vertex.\n\n"
+                "  Run this once:\n"
+                "      gcloud auth application-default login\n\n"
+                "  Then confirm with:  python -m warden.doctor\n\n"
+                "  Or set GOOGLE_GENAI_USE_ENTERPRISE=0 and GOOGLE_API_KEY=<AI Studio key>\n"
+                "  to use the Gemini API instead, or drop --live for scripted models."
+            )
         return
 
     key = s.google_api_key or os.environ.get("GOOGLE_API_KEY", "")
