@@ -18,6 +18,8 @@ credential that cannot back it up.
 
 from __future__ import annotations
 
+import pytest
+
 from warden.config import GitHubCredential
 from warden.tools.github_client import GitHubClient
 
@@ -123,3 +125,76 @@ def test_the_installation_token_cannot_read_or_edit_branch_protection():
 def test_the_installation_token_is_not_granted_anything_else():
     """A new permission should be a deliberate edit here, with a reason."""
     assert set(GitHubClient.TOKEN_PERMISSIONS) == {"contents", "pull_requests", "metadata"}
+
+
+# --------------------------------------------------------------------------
+# How the installation token is minted.
+#
+# PyGithub's `Auth.AppAuth(...).get_installation_auth(...)` returns an auth
+# object that is NOT attached to a Requester. Reading `.token` on it raises
+#
+#     AssertionError: Method withRequester(Requester) must be called first
+#
+# before any HTTP request happens. `estate-gitops/scripts/verify-github-token.sh`
+# hit exactly this, silently fell back to the PAT, and reported the write path
+# as unenforced — on a correctly configured GitHub App. A verification script
+# that quietly downgrades what it is verifying is the worst possible bug in a
+# verification script.
+#
+# GitHubClient does not have that problem, because it hands the auth to
+# `Github(auth=...)`, and PyGithub's Requester calls `withRequester` on it
+# during construction. These tests pin that difference so a future refactor
+# cannot quietly drop the wrapper.
+# --------------------------------------------------------------------------
+
+
+def _throwaway_key() -> str:
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    return key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.TraditionalOpenSSL,
+        serialization.NoEncryption(),
+    ).decode()
+
+
+def test_a_bare_installation_auth_cannot_produce_a_token():
+    """Characterises the library trap. No network: the assert fires first."""
+    from github import Auth
+
+    auth = Auth.AppAuth("123", _throwaway_key()).get_installation_auth(456)
+    with pytest.raises(AssertionError, match="withRequester"):
+        _ = auth.token
+
+
+def test_the_client_wires_the_auth_through_a_requester(monkeypatch):
+    """GitHubClient must construct Github(auth=...) — that is what wires it."""
+    import github
+
+    seen = {}
+
+    class FakeGithub:
+        def __init__(self, auth=None, **kwargs):
+            seen["auth"] = auth
+
+        def get_repo(self, name):
+            seen["repo"] = name
+            return "repo-handle"
+
+    monkeypatch.setattr(github, "Github", FakeGithub)
+
+    cred = GitHubCredential(
+        kind="app",
+        label="GitHub App 123 · installation 456",
+        enforced=True,
+        app_id="123",
+        installation_id="456",
+        private_key=_throwaway_key(),
+    )
+    client = GitHubClient(repo_full_name="mazzyy/estate-gitops", credential=cred)
+
+    assert client._repo_handle() == "repo-handle"
+    assert seen["repo"] == "mazzyy/estate-gitops"
+    assert type(seen["auth"]).__name__ == "AppInstallationAuth"
