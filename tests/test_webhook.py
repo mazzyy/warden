@@ -29,8 +29,9 @@ from warden.agents.orchestrator import verify_merged_incident
 from warden.control_plane.registry import load_all
 from warden.control_plane.store import InMemoryStore
 from warden.estate.fake import FakeAdapter
+from warden.ingest import signature_ok
 from warden.models import Incident, IncidentStatus, WorkloadRef
-from warden.server import _signature_ok, app
+from warden.server import app
 from warden.tools.github_client import GitHubClient
 from warden.tools.toolbox import ToolBox
 
@@ -67,30 +68,30 @@ def _post(client, body, *, secret=SECRET, event="pull_request", sign=True):
 def test_a_correct_signature_passes():
     body = b'{"hello": "world"}'
     digest = hmac.new(SECRET.encode(), body, hashlib.sha256).hexdigest()
-    assert _signature_ok(SECRET, body, f"sha256={digest}") is True
+    assert signature_ok(SECRET, body, f"sha256={digest}") is True
 
 
 def test_a_tampered_body_fails():
     body = b'{"hello": "world"}'
     digest = hmac.new(SECRET.encode(), body, hashlib.sha256).hexdigest()
-    assert _signature_ok(SECRET, b'{"hello": "evil"}', f"sha256={digest}") is False
+    assert signature_ok(SECRET, b'{"hello": "evil"}', f"sha256={digest}") is False
 
 
 def test_the_wrong_secret_fails():
     body = b'{"hello": "world"}'
     digest = hmac.new(b"not-the-secret", body, hashlib.sha256).hexdigest()
-    assert _signature_ok(SECRET, body, f"sha256={digest}") is False
+    assert signature_ok(SECRET, body, f"sha256={digest}") is False
 
 
 def test_a_missing_header_fails():
-    assert _signature_ok(SECRET, b"{}", None) is False
+    assert signature_ok(SECRET, b"{}", None) is False
 
 
 def test_an_unprefixed_digest_fails():
     """A bare hex digest is not a valid header, however correct the hash is."""
     body = b"{}"
     digest = hmac.new(SECRET.encode(), body, hashlib.sha256).hexdigest()
-    assert _signature_ok(SECRET, body, digest) is False
+    assert signature_ok(SECRET, body, digest) is False
 
 
 # --------------------------------------------------------------------------

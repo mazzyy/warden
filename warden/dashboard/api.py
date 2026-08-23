@@ -21,6 +21,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from warden import ingest
 from warden.config import credential_mode, settings
 from warden.control_plane.budget import estimate_usd
 from warden.control_plane.jsonl_store import JsonlStore
@@ -84,10 +85,20 @@ async def lifespan(app: FastAPI):
             log.info("dashboard: jsonl store at %s, real data", _state["store"].dir)
 
     _state["fleet"] = load_all(s.manifest_dir)
+
+    # Hand the ingest router the same store and fleet. One deployed service
+    # answers the GitHub webhook, receives Pub/Sub alerts and serves this
+    # screen — which is what makes the webhook URL stable without a tunnel,
+    # and what guarantees the incident the webhook closes is the incident the
+    # dashboard is showing.
+    ingest.configure(store=_state["store"], fleet=_state["fleet"])
     yield
 
 
 app = FastAPI(title="Warden", version="0.1.0", lifespan=lifespan)
+
+# Mounted before the SPA catch-all, which claims every remaining path.
+app.include_router(ingest.router)
 
 
 # --------------------------------------------------------------------------
@@ -133,6 +144,8 @@ async def healthz() -> JSONResponse:
     await probe("budget", _budget_probe())
 
     checks["credentials"] = {"ok": True, "detail": credential_mode(), "critical": False}
+    for name, detail in ingest.status().items():
+        checks[name] = {"ok": True, "detail": detail, "critical": False}
     checks["estate"] = {"ok": True, "detail": f"adapter={s.estate_adapter}", "critical": False}
 
     fleet_state = await store.get_fleet_state()

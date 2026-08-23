@@ -51,6 +51,3 @@ dashboard:
 	@test -d warden/dashboard/web/dist || (cd warden/dashboard/web && npm install && npm run build)
 	./.venv/bin/python -m uvicorn warden.dashboard.api:app --port 8080 --reload
 
-dashboard:
-	@test -d warden/dashboard/web/dist || (cd warden/dashboard/web && npm install && npm run build)
-	./.venv/bin/python -m uvicorn warden.dashboard.api:app --port 8080 --reload

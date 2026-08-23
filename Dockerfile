@@ -1,11 +1,32 @@
-# One image, one Cloud Run service: the FastAPI app serves both /api and the
-# built React SPA from the same origin. No CORS, no second service, nothing
-# extra to break on the day you record.
+# One image, one Cloud Run service, one origin. The FastAPI app serves four
+# things that used to want to be separate deployments:
 #
-#   gcloud run deploy warden-dashboard --source . --region europe-west3 \
+#   GET  /             the built React SPA
+#   GET  /api/*        the operations screen's data
+#   POST /pubsub       an alert fired    -> triage, diagnose, propose a PR
+#   POST /webhook/github  a human merged -> verify, or open a revert
+#
+# The last two arrive from `warden/ingest.py`, mounted as a router. Splitting
+# them into a second service would mean a second URL, and the webhook URL is the
+# one that has to be stable and public — which is exactly what a laptop tunnel
+# is worst at providing. Cloud Run gives it for free.
+#
+#   gcloud run deploy warden --source . --region europe-west3 \
 #     --service-account sa-dashboard@$PROJECT.iam.gserviceaccount.com \
 #     --set-env-vars WARDEN_STORE=firestore,GOOGLE_GENAI_USE_ENTERPRISE=1 \
+#     --set-secrets GITHUB_WEBHOOK_SECRET=warden-webhook-secret:latest,\
+# GITHUB_APP_PRIVATE_KEY=warden-github-app-key:latest \
 #     --allow-unauthenticated
+#
+# Then point the GitHub webhook at https://<service-url>/webhook/github and
+# check https://<service-url>/healthz — it reports `webhook: armed` only when
+# GITHUB_WEBHOOK_SECRET actually reached the container. Unauthenticated is
+# correct here: GitHub signs its deliveries and the endpoint verifies the HMAC
+# itself, so IAM would only lock out the caller that is supposed to reach it.
+#
+# `--allow-unauthenticated` does leave /api/* and the SPA public. For a demo
+# estate that is the intended trade; for anything real, split the ingest router
+# onto its own unauthenticated service and put IAP in front of the dashboard.
 
 # ---- stage 1: build the SPA -------------------------------------------------
 # The build runs here rather than being a step you have to remember, because

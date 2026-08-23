@@ -16,26 +16,28 @@ Built for the All Things Agentic Hackathon, in the Fortified Enterprise Fleet ca
 
 This section is first on purpose. A governance project that oversells itself is worse than one that admits its gaps.
 
-There are six claims the design makes. Three are proven by a check that attempts the forbidden thing and gets refused. Two are implemented and one command away from being proven on your machine. One is an open gap, and the code says so at runtime.
+There are eight claims the design makes. All eight are now enforced by something outside the agent's reach, and each one has been observed refusing the forbidden action against live infrastructure — not asserted by reading a configuration value back.
 
-| Claim | What enforces it | State |
+| Claim | What enforces it | How it was proven |
 | --- | --- | --- |
-| An agent cannot call a tool it was not granted | ADK `before_tool_callback`, in-process | Proven — `make probe` |
-| No agent can write to the cluster | `warden-reader` ServiceAccount, get/list/watch only | Proven — `verify-rbac.sh` |
-| A patch cannot exceed its blast radius | Namespace, file count and line count, checked twice | Proven — policy and client tests |
-| The logs a diagnosis rests on are real | Cluster CA pinned on the API connection | Implemented, needs the CA extracted |
-| Only CI can change the estate | `warden-sync` ServiceAccount, namespaced, no delete verb | Implemented, needs applying |
-| The agent cannot merge its own pull request | Nothing yet — see below | **Open gap** |
+| An agent cannot call a tool it was not granted | ADK `before_tool_callback`, in-process | `make probe` — 4 agents × 11 tools, every denial exercised |
+| No agent can write to the cluster | `warden-reader` ServiceAccount, get/list/watch only | `verify-rbac.sh` — attempts a delete, is refused |
+| A patch cannot exceed its blast radius | Namespace, file count and line count, checked twice | Policy tests, plus a second check against the real diff |
+| The logs a diagnosis rests on are real | Cluster CA pinned on the API connection | TLS handshake verified before the CA is accepted |
+| Only CI can change the estate | `warden-sync` ServiceAccount, namespaced, no `delete` verb | `verify-sync-rbac.sh` — 4 verbs allowed, 6 denied |
+| The agent cannot merge its own pull request | A GitHub App, which holds no repository role | Direct commit to protected `main` returned **HTTP 409** |
+| The audit trail holds no secrets | Recursive redaction on tool arguments and results | 10 tests, including keys the first version missed |
+| A merge closes the incident that opened *that* pull request | HMAC signature check, then a match on `pr_url` | 15 tests — with two incidents in flight, the wrong one stays open |
 
-The last row is the one to read carefully. A fine-grained personal access token inherits the repository role of the human who minted it. We measured this: with branch protection enabled requiring one approving review, a direct commit to `main` using the agent's own token returned **HTTP 201** and landed. Narrow scopes decide which repositories and which APIs a token may touch. They do not decide who the token is.
+Row six is the one worth reading twice, because it started as the project's open gap and the fix was not the obvious one. A fine-grained personal access token **inherits the repository role of the human who minted it**. We measured that: with branch protection enabled requiring one approving review, a direct commit to `main` using the agent's own token returned **HTTP 201** and landed. Narrow scopes decide which repositories and which APIs a token may touch. They do not decide who the token *is*.
 
-So on the PAT path, "the agent cannot merge its own work" is true only because Warden's code never calls the merge endpoint. That is a promise, not a control. The fix is a GitHub App, which holds no repository role and cannot approve a pull request; it is about fifteen minutes of setup and is documented in [`docs/IDENTITY.md`](docs/IDENTITY.md).
+On that path, "the agent cannot merge its own work" was true only because Warden's code never called the merge endpoint. A promise, not a control. A GitHub App holds no repository role at all, so protection applies to it with no bypass to inherit — the same commit now returns **HTTP 409**, and the App cannot approve a pull request even in principle. The full measurement, both numbers, and the setup are in [`docs/IDENTITY.md`](docs/IDENTITY.md).
 
-Until that is done, Warden says so out loud: the demo header prints `boundary: NOT enforced`, every pull request footer carries the warning, and `verify-github-token.sh` exits non-zero.
+Warden still says which credential it is running as, out loud, on every run: the demo header prints `boundary: enforced` or `NOT enforced`, the pull request footer changes wording depending on the answer, and `verify-github-token.sh` exits non-zero on the weaker path.
 
-One incident type has been fixed end to end against real infrastructure. A second is built and has never been run live. See [What it can actually fix](#what-it-can-actually-fix).
+Two incident types have been built. One — a bad configuration value — has been fixed end to end against real infrastructure several times. The second, an OOMKilled workload, is injected and waiting. See [What it can actually fix](#what-it-can-actually-fix).
 
-119 tests pass. No cloud project, API key or spend is required to run them.
+123 tests pass across 12 files. No cloud project, API key or spend is required to run them.
 
 ---
 
@@ -251,7 +253,7 @@ That exits non-zero if any agent in the fleet can reach a cluster write. It runs
 **The test suite.**
 
 ```bash
-make test     # 119 tests
+make test     # 123 tests
 make check    # lint, tests, and the no-cluster-writes assertion
 ```
 
@@ -351,7 +353,7 @@ cd ../warden
 
 Step 5 exists because the merge is a human action that happens after the demo process has exited. By the time verifying means anything, the process that would have done it is long gone. `--verify-only` runs the verifier alone against the last incident in the store.
 
-To make the merge itself wake the verifier — no step 5 at all — run `warden/server.py`, expose it, and add a webhook on `estate-gitops`. That is [`docs/WEBHOOK.md`](docs/WEBHOOK.md), and it takes about ten minutes.
+To make the merge itself wake the verifier — no step 5 at all — add a webhook on `estate-gitops` pointing at a running dashboard. The dashboard mounts the ingest router, so `make dashboard` already serves `/webhook/github` alongside the operations screen; there is no second process and no second URL. That is [`docs/WEBHOOK.md`](docs/WEBHOOK.md), and the only awkward part is giving GitHub a public hostname, which deploying to Cloud Run solves permanently.
 
 `./scripts/inject.sh restore` puts the estate back to known-good. Run it before every take.
 
@@ -364,7 +366,7 @@ To make the merge itself wake the verifier — no step 5 at all — run `warden/
 | Nothing | offline demo, tests, policy matrix | — | `make demo`, `make test`, `make probe` |
 | Vertex ADC or a Gemini API key | live model calls | `.env` | `make demo-live` |
 | GitHub fine-grained PAT | opening real pull requests | `GITHUB_TOKEN` in `.env` | live pull requests |
-| GitHub App id, installation id, private key path | the enforced write boundary | `GITHUB_APP_*` in `.env` | closing the open gap |
+| GitHub App id, installation id, private key path | the enforced write boundary | `GITHUB_APP_*` in `.env` | a write path branch protection refuses |
 | AKS API server, reader token, cluster CA | reading a real estate | `AKS_*` in `.env` | `ESTATE_ADAPTER=aks` |
 | `KUBE_APISERVER`, `KUBE_TOKEN`, `KUBE_CA` | CI applying merged changes | GitHub repository secrets | the sync workflow |
 | A Google Cloud project | Firestore, Cloud Run, Pub/Sub | `infra/gcp/main.tf` | deployment |
@@ -419,16 +421,20 @@ warden/
       orchestrator.py     the pipeline, in plain Python rather than an ADK tree
       runtime.py          one agent run: budget, retries, usage accounting
       demo.py             the terminal trace
-    dashboard/            FastAPI plus a React SPA, one service
+    dashboard/            FastAPI plus a React SPA, and the ingest router
     doctor.py             preflight: what is configured, what is missing
     probe.py              the policy matrix, and the CI assertion
-    server.py             Pub/Sub push and GitHub webhook endpoints
+    ingest.py             Pub/Sub push and GitHub webhook, as a mountable router
+    server.py             the same router, standalone, for running it without the UI
   infra/azure/            AKS cluster, Free tier control plane
   infra/gcp/              Firestore, Pub/Sub, Artifact Registry, six service accounts
   docs/SETUP.md           cloud setup, verified command by command
   docs/IDENTITY.md        who the agent writes as, and why it matters
-  tests/                  119 tests across 12 files
+  docs/WEBHOOK.md         making the merge itself wake the verifier
+  tests/                  123 tests across 12 files
 ```
+
+`ingest.py` is a router rather than an app because the webhook needs a stable public URL and the dashboard needs to be deployed anyway. Two apps meant two Cloud Run services, two URLs and two deploys; one router mounted by both means the operations screen you are already running is also the webhook receiver.
 
 The orchestrator is deliberately plain Python rather than an ADK multi-agent delegation tree. Each agent gets its own run, its own budget and its own audit trail, and the handoffs between them are explicit and inspectable. When the demo is a live break-and-fix on camera, being able to point at exactly what happened and when is worth more than elegance.
 
@@ -454,30 +460,30 @@ Every one of these came from running against real infrastructure, not from a tes
 | The token verification script read HTTP 403 as "no rule exists" | A credential that cannot read its own guardrail is behaving correctly. The script now attempts the write instead of reading configuration. |
 | A tool that raised an exception was never audited | `after_tool_callback` does not fire on an error, so a cluster timeout left no trace. An audit log that drops failures reads as a clean run. |
 | The result redactor missed `x-api-key` | It listed spellings instead of normalising keys. Caught by its own test, which is the only reason to write tests for a redactor. |
+| The merge webhook re-ran the whole pipeline | It called `handle_incident(..., verify=True)`, which starts at Triage. On a merge that opens a *fresh* incident for a workload that was just fixed, and could propose a second pull request for a fault that no longer exists. The merge is the end of an incident, not the start of one. |
+| The merge closed "the most recent incident" | Correct with one incident in flight; with two it marks a real, unfixed fault as resolved. It matches on `pr_url` now, and verifies nothing at all if no stored incident carries that URL. |
+
+The one exception to "found by running it": two different faults shared one signature. Triage deduplicates on that string, and it led with the symptom — `checkout-svc/RolloutBlocked` — but an OOMKilled workload and a workload crashlooping on a bad configuration value both stall a rollout. The second fault the fleet ever saw would have matched the first one's signature and been dismissed as a duplicate of an incident already awaiting a merge, before anyone looked at the cluster. Found while setting up the second live run rather than during it. The signature now leads with the container reason and falls back to the symptom only when the cluster offers no cause; the regression test asserts neither signature is a substring of the other, because the recall tool matches by substring.
 
 ---
 
 ## What is remaining
 
-Roughly in dependency order.
+Every governance control is now enforced and proven. What is left is coverage, deployment and submission.
 
-**Wire the CI applier.** `rbac/warden-sync.yaml` needs applying to the cluster, the replacement `sync.yml` needs moving into `.github/workflows/`, and `./scripts/ci-credentials.sh --set` pushes the three repository secrets through `gh` without the token touching your scrollback. Until then a human runs `kubectl apply`, and the Apply column in the pipeline is aspirational. About fifteen minutes.
+**Run the second incident type live.** `./scripts/inject.sh oom` produces an OOMKilled workload — a different symptom, different evidence, and a patch to a different part of the same file than the configuration fault. The estate is currently sitting in exactly that state. Running it is what turns "it fixed a typo" into "it diagnoses root causes", and it is the highest-value remaining item.
 
-**Turn on TLS verification.** One command, `./scripts/extract-reader-credentials.sh`, and four lines pasted into `.env`. Until then the demo header prints `tls NOT VERIFIED` on every run.
+**Apply the Google Cloud Terraform.** `infra/gcp/main.tf` provisions Firestore, Pub/Sub, Artifact Registry, six service accounts with least-privilege bindings, empty Secret Manager containers and a five-dollar budget alert. Firestore is what lets an incident outlive a local process — and, once deployed, survive a Cloud Run instance scaling to zero between the pull request and the merge.
 
-**Give the agent its own identity.** The GitHub App in `docs/IDENTITY.md`. This is the only open governance gap, and it is the one a judge is most likely to probe. About fifteen minutes of GitHub UI, no code.
+**Deploy to Cloud Run.** One service, one origin: the SPA, `/api/*`, the Pub/Sub push endpoint and the GitHub webhook all come from the same image. That consolidation is why the webhook is nearly free at this point — it needs a stable public URL, and the deploy is what provides one. A Cloud Monitoring uptime check against `/healthz` guards the demo URL through the judging window.
 
-**Run a second incident type live.** `./scripts/inject.sh oom` produces an OOMKilled workload — a different symptom, different evidence, and a different patch to a different part of the same file. Running it is what turns "it fixed a typo" into "it diagnoses root causes". This is the highest-value remaining item for the submission.
-
-**Apply the Google Cloud Terraform.** `infra/gcp/main.tf` provisions Firestore, Pub/Sub, Artifact Registry, six service accounts with least-privilege bindings, empty Secret Manager containers and a five-dollar budget alert. Firestore is what lets the dashboard show incidents that outlive a local process.
-
-**Deploy the dashboard to Cloud Run.** One service serving both the API and the built SPA, so there is one deploy and no CORS. A Cloud Monitoring uptime check against `/healthz` guards the demo URL through the judging window.
-
-**Delete the stale branches.** Six `warden/*` branches from earlier runs are still on `estate-gitops`.
+**Add the GitHub webhook.** Ten minutes once the service URL exists. [`docs/WEBHOOK.md`](docs/WEBHOOK.md) has the payload URL, the secret handling and a debugging table. Until then the last step of the loop is `--verify-only`, run by hand.
 
 **Record the four-minute video.** Live, unedited execution is required by the rules. Rehearse three times, and run `./scripts/inject.sh restore` before every take.
 
 **Write the Devpost submission.**
+
+Done since the last revision of this section: the CI applier is wired (`rbac/warden-sync.yaml` applied, `sync.yml` in `.github/workflows/`, all three repository secrets set through stdin so the cluster token never touched a scrollback); TLS verification is on and the handshake is checked before the CA is trusted; the GitHub App holds the write path and branch protection now refuses it; the stale `warden/*` branches are deleted.
 
 ---
 

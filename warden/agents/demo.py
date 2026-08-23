@@ -86,16 +86,33 @@ async def observed_alert(estate, alert: dict[str, str]) -> tuple[dict[str, str],
         )
         return alert, None
 
-    # Read the structured fields, not the prose. Splitting `summary` on an
-    # em dash produced `checkout-svc/Error` for a blocked rollout — a signature
-    # so vague that Triage, whose only tools are the alert text and past
-    # incidents, had nothing to work with and closed the incident.
     observed = dict(alert)
     observed["title"] = f"{ref.name}: {status.summary}"
-    if status.rollout == "blocked":
-        observed["signature"] = f"{ref.name}/RolloutBlocked"
-    elif status.reasons:
+
+    # The signature is what Triage deduplicates on, so it has to be derived from
+    # the structured fields rather than the prose, and it has to name the CAUSE
+    # in preference to the symptom. Two bugs are recorded here.
+    #
+    # The first: splitting `summary` on an em dash produced `checkout-svc/Error`
+    # for a blocked rollout — vague enough that Triage, whose only tools are the
+    # alert text and past incidents, had nothing to work with and closed a real
+    # incident.
+    #
+    # The second is the reason `reasons` is checked before `rollout`. A blocked
+    # rollout is not one failure mode. OOMKilled, ImagePullBackOff and a bad
+    # configuration value all stall a rollout and all need entirely different
+    # evidence. Collapsing them into `checkout-svc/RolloutBlocked` means the
+    # second fault the fleet ever sees matches the first one's signature, and
+    # Triage — correctly, given what it was told — reads it as a duplicate of an
+    # incident already awaiting a merge and stops before anyone looks at the
+    # cluster. `RolloutBlocked` is therefore what we fall back to when the
+    # cluster gives us no container reason at all, not what we lead with. The
+    # blocked-ness is not lost: it is the first thing `status.summary` says, and
+    # the summary is the title Triage reads.
+    if status.reasons:
         observed["signature"] = f"{ref.name}/{status.reasons[0]}"
+    elif status.rollout == "blocked":
+        observed["signature"] = f"{ref.name}/RolloutBlocked"
     elif status.healthy:
         observed["signature"] = f"{ref.name}/Healthy"
     else:
