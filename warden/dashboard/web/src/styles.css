@@ -226,6 +226,18 @@ h1, h2 { font-family: Archivo, ui-sans-serif, sans-serif; margin: 0; }
   font-family: 'IBM Plex Mono', monospace; font-size: 10px; font-weight: 600;
   letter-spacing: .12em; text-transform: uppercase; color: var(--muted);
 }
+/* Says out loud what the drawings imply. Only `agent` takes the accent: the
+   four that light up are the fleet, and the three that stay grey are the
+   stages it cannot occupy. */
+.col-kind {
+  margin-left: auto; flex: none;
+  font-size: 8.5px; letter-spacing: .14em; padding: 2px 5px; border-radius: 3px;
+  border: 1px solid transparent;
+}
+.kind-agent  { background: var(--accent-soft); color: var(--accent); }
+.kind-signal, .kind-human, .kind-ci {
+  background: transparent; color: var(--muted); border-color: var(--line-2); opacity: .75;
+}
 .col-num {
   display: inline-grid; place-items: center;
   width: 16px; height: 16px; border-radius: 4px;
@@ -273,49 +285,48 @@ h1, h2 { font-family: Archivo, ui-sans-serif, sans-serif; margin: 0; }
 
 .fig { display: block; overflow: visible; }
 
-/* Base look: everything is inert line-work until state says otherwise. */
-.fig-shell  { fill: var(--surface-2); stroke: var(--line-2); stroke-width: 2.2; }
+/* Base look: everything is inert line-work until state says otherwise.
+ *
+ * Three roles, and every shape belongs to exactly one of them. The previous
+ * version named a class per body part — fig-ant, fig-dial, fig-needle, fig-tick
+ * — which meant every state block listed nine selectors and adding a shape
+ * meant remembering to add it to four of them. A shape left off that list
+ * stays grey while the rest of the figure turns green, which is a bug that
+ * only shows up mid-run.
+ *
+ *   fig-shell / fig-stroke / fig-doc   solid bodies
+ *   fig-lit                            filled marks that carry state
+ *   fig-live / fig-ring / fig-handle   stroked marks that carry state
+ *   fig-line / fig-glint               detail that stays neutral, always
+ */
+.fig-shell  { fill: var(--surface-2); stroke: var(--line-2); stroke-width: 2.2; stroke-linejoin: round; }
 .fig-stroke { fill: var(--surface-2); stroke: var(--line-2); stroke-width: 2.2; stroke-linecap: round; }
-.fig-ring   { fill: none; stroke: var(--line-2); stroke-width: 5; }
-.fig-handle { stroke: var(--line-2); stroke-width: 6; stroke-linecap: round; }
-.fig-ant    { stroke: var(--line-2); stroke-width: 2.4; stroke-linecap: round; }
-.fig-arm    { stroke: var(--line-2); stroke-width: 4; stroke-linecap: round; }
-.fig-dial   { stroke: var(--line-2); stroke-width: 3.4; stroke-linecap: round; }
-.fig-tick   { stroke: var(--line-2); stroke-width: 2.2; stroke-linecap: round; }
-.fig-bang   { stroke: var(--line-2); stroke-width: 3.4; stroke-linecap: round; }
-.fig-doc      { fill: var(--surface); stroke: var(--line-2); stroke-width: 2; }
-.fig-doc-line { stroke: var(--line-2); stroke-width: 1.9; stroke-linecap: round; }
-.fig-glint    { fill: var(--surface); opacity: .5; }
+.fig-doc    { fill: var(--surface);   stroke: var(--line-2); stroke-width: 2.2; stroke-linejoin: round; }
 
-/* The four marks that carry state. Grouped so each state block stays short. */
-.fig-visor, .fig-visor-c, .fig-tip, .fig-hub { fill: var(--line-2); }
-.fig-needle { stroke: var(--line-2); stroke-width: 3.4; stroke-linecap: round; }
+.fig-lit    { fill: var(--line-2); }
+.fig-live   { fill: none; stroke: var(--line-2); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.fig-ring   { fill: none; stroke: var(--line-2); stroke-width: 4.6; }
+.fig-handle { fill: none; stroke: var(--line-2); stroke-width: 5.5; stroke-linecap: round; }
 
-.fig-working .fig-visor,
-.fig-working .fig-visor-c,
-.fig-working .fig-tip,
-.fig-working .fig-hub { fill: var(--accent); }
-.fig-working .fig-needle,
-.fig-working .fig-dial,
-.fig-working .fig-bang { stroke: var(--accent); }
-.fig-working .fig-shell,
-.fig-working .fig-ring { stroke: var(--accent); }
+.fig-line   { fill: none; stroke: var(--line-2); stroke-width: 1.9; stroke-linecap: round; opacity: .7; }
+.fig-glint  { fill: var(--surface); opacity: .5; }
+
+.fig-working .fig-lit { fill: var(--accent); }
+.fig-working .fig-shell, .fig-working .fig-doc, .fig-working .fig-live,
+.fig-working .fig-ring, .fig-working .fig-handle { stroke: var(--accent); }
 .fig-working { animation: breathe 1.5s ease-in-out infinite; transform-origin: 50% 92%; }
 @keyframes breathe { 0%, 100% { transform: translateY(0) } 50% { transform: translateY(-3px) } }
 
-.fig-done .fig-visor,
-.fig-done .fig-visor-c,
-.fig-done .fig-tip,
-.fig-done .fig-hub { fill: var(--ok); }
-.fig-done .fig-needle,
-.fig-done .fig-dial { stroke: var(--ok); }
-.fig-done .fig-shell,
-.fig-done .fig-ring { stroke: var(--ok); }
+.fig-done .fig-lit { fill: var(--ok); }
+.fig-done .fig-shell, .fig-done .fig-doc, .fig-done .fig-live,
+.fig-done .fig-ring, .fig-done .fig-handle { stroke: var(--ok); }
 
-.fig-blocked .fig-visor, .fig-blocked .fig-visor-c, .fig-blocked .fig-tip, .fig-blocked .fig-hub,
-.fig-failed  .fig-visor, .fig-failed  .fig-visor-c, .fig-failed  .fig-tip, .fig-failed  .fig-hub { fill: var(--risk); }
-.fig-blocked .fig-shell, .fig-blocked .fig-ring, .fig-blocked .fig-needle, .fig-blocked .fig-dial,
-.fig-failed  .fig-shell, .fig-failed  .fig-ring, .fig-failed  .fig-needle, .fig-failed  .fig-dial { stroke: var(--risk); }
+.fig-blocked .fig-lit,
+.fig-failed  .fig-lit { fill: var(--risk); }
+.fig-blocked .fig-shell, .fig-blocked .fig-doc, .fig-blocked .fig-live,
+.fig-blocked .fig-ring, .fig-blocked .fig-handle,
+.fig-failed  .fig-shell, .fig-failed  .fig-doc, .fig-failed  .fig-live,
+.fig-failed  .fig-ring, .fig-failed  .fig-handle { stroke: var(--risk); }
 .fig-blocked { animation: alarm .7s steps(2) infinite; }
 @keyframes alarm { 50% { opacity: .45 } }
 

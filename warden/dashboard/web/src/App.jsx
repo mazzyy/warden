@@ -33,9 +33,14 @@ const AGENT_ROLE = {
 }
 
 const NON_AGENT = {
-  alert: { Figure: AlertFigure, role: 'Something broke', who: 'Cloud Monitoring' },
-  review: { Figure: HumanFigure, role: 'Approve, or do not', who: 'A person' },
-  apply: { Figure: CiFigure, role: 'Roll the merged change out', who: 'warden-sync' },
+  // `kind` is the tag in the stage header. The drawings carry this too — one
+  // shared chassis for the fleet, three deliberately unlike shapes for the rest
+  // — but a viewer seeing the row for the first time should not have to infer
+  // it from a silhouette. Three of seven stages have nobody from the fleet in
+  // them, and that is the whole argument.
+  alert: { Figure: AlertFigure, role: 'Something broke', who: 'Cloud Monitoring', kind: 'signal' },
+  review: { Figure: HumanFigure, role: 'Approve, or do not', who: 'A person', kind: 'human' },
+  apply: { Figure: CiFigure, role: 'Roll the merged change out', who: 'warden-sync', kind: 'ci' },
 }
 
 /* -------------------------------------------------------------------- */
@@ -220,6 +225,9 @@ function Track({ live, agentsBy, flash, picked, onPick }) {
               <div className="col-stage">
                 <span className="col-num">{i + 1}</span>
                 {p.label}
+                <span className={`col-kind kind-${agent ? 'agent' : meta.kind}`}>
+                  {agent ? 'agent' : meta.kind}
+                </span>
               </div>
 
               <div className="col-fig">

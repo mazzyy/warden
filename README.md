@@ -102,6 +102,43 @@ Run `make probe` to print this matrix from the live policy engine rather than fr
 
 ---
 
+## Where an alert comes from, and how a failure is recognised
+
+The fleet does not watch anything. Something else notices, and hands it a signal. That distinction is load-bearing: an agent that polls a cluster on a loop is a monitoring system with a language model bolted on, and it has to hold cluster credentials continuously to do it. Warden is woken, does one incident, and goes back to sleep.
+
+There are three doors and two of them are open today.
+
+**Pub/Sub push.** `POST /pubsub` takes a Cloud Monitoring notification, base64-decodes the payload and starts an incident in the background. This is the intended production path: Cloud Monitoring owns the thresholds, Pub/Sub owns delivery and retry, and the fleet owns only the response. The endpoint acknowledges before it works, because an incident takes tens of seconds and Pub/Sub's ack deadline is shorter than that — a late ack means redelivery, and redelivery means running the fleet twice on one alert and opening two pull requests for one fault.
+
+**The demo, locally.** `make demo-live` reads the live cluster and builds the alert out of what it actually finds. This is the honest version of a canned demo, and it exists because of a bug: the alert used to say `0/3 replicas ready` while three replicas were serving traffic perfectly well. Handing an agent a symptom that did not happen grades the run on the wrong thing — the diagnosis can match the alert beautifully and prove nothing about the cluster.
+
+**A GitHub webhook.** `POST /webhook/github` is not an alert path. It is how a merge tells the Verifier there is something to check, and it is listed here because it is the other thing that wakes the fleet without a human running a command.
+
+### What the signal actually contains
+
+Four fields, and Triage sees nothing beyond them.
+
+| Field | Example | What reads it |
+| --- | --- | --- |
+| `title` | `checkout-svc: rollout BLOCKED — 0/3 pods on the new revision, OOMKilled` | Triage, as prose |
+| `signature` | `checkout-svc/OOMKilled` | Triage, to look for duplicates |
+| `workload` / `namespace` | `checkout-svc` / `demo` | every later stage, as the target |
+| `source` | `cloud-monitoring` | the audit record |
+
+Triage has no cluster access at all — no logs, no pod specs, no metrics, no deploy history. That is deliberate rather than incidental. The first stage is a phone screener, and a phone screener that *can* investigate will investigate: it would cost what the investigator costs and answer a different question. Triage decides severity, whether this duplicates something already open, and whether the rest of the fleet is worth waking. Everything it needs for that is in the four fields above.
+
+The signature is derived from structured cluster fields rather than from the summary prose, and it names the container's failure reason in preference to the symptom — `checkout-svc/OOMKilled`, never `checkout-svc/RolloutBlocked` when a reason is available. Both of those rules are scar tissue. Splitting the summary on an em dash once produced `checkout-svc/Error`, too vague for an agent whose only other tool is a history lookup. And leading with the symptom made every stalled rollout share one signature, so the second fault the fleet ever saw matched the first one's and would have been dismissed as a duplicate before anyone looked at the cluster.
+
+### How a failure is recognised at all
+
+No model decides what "broken" means. The estate adapter does, in plain Python, before any agent runs.
+
+It reads the Deployment's replica counts and every pod's container statuses, and treats a fixed set of container reasons as failure: `CrashLoopBackOff`, `OOMKilled`, `ImagePullBackOff`, `ErrImagePull`, `InvalidImageName`, `CreateContainerConfigError`, `CreateContainerError`, `RunContainerError`, and a bare `Error`. That list is a constant in `warden/estate/aks.py`, reviewable as a diff, and a reason not on it is not an incident.
+
+Rollout health is a separate question from replica health, and conflating them cost a live run. `readyReplicas == desiredReplicas` stays true for the *entire duration* of a completely blocked rollout, because the previous ReplicaSet keeps serving while the new one crashloops behind it. So the adapter also reads `updatedReplicas` and the `ProgressDeadlineExceeded` condition, and a stalled rollout reports as blocked even while every replica is ready and every user is fine.
+
+---
+
 ## How the governance actually works
 
 Two independent tiers, so a failure in one does not become a breach.
@@ -189,7 +226,13 @@ sequenceDiagram
 
 ## What it can actually fix
 
-A fix is possible when two things are true at once: the root cause is visible in what the diagnostician can read, and the fix is a small edit to a YAML file in the GitOps repository.
+**It does not fix application source code, and it structurally cannot.** This is the first question everyone asks, so it belongs at the top of the section rather than buried in the caveats. The remediator holds exactly one repository — `estate-gitops`, the declared desired state of the estate — and the service's own source lives somewhere else entirely. There is no tool in the catalog that reaches it. If the bug is a null dereference in the checkout handler, Warden will tell you the container is crashing, show you the stack trace it read from the pod, and stop. Fixing it is a human's job in a different repository.
+
+What it changes is the *deployment* of the code: environment variables, resource limits, image tags, replica counts, probe configuration, timeouts. YAML, in other words — the layer where a large share of production incidents actually originate, and the layer where a wrong value is a one-line diff rather than a rewrite.
+
+That boundary is not a limitation we are apologising for. It is most of the reason the central claim holds. A remediator that could edit arbitrary source would need write access to every repository in the estate; one that edits declarative state needs access to a single repository whose entire contents are reviewable in a diff, and whose changes only reach the cluster through a CI credential the agent does not have.
+
+Beyond that boundary, a fix is possible when two things are true at once: the root cause is visible in what the diagnostician can read, and the fix is a small edit to a YAML file in the GitOps repository.
 
 **Proven end to end against real infrastructure.** A wrong environment variable value — `htps://` instead of `https://` — crashlooping the service on startup. Real crashloop, real container logs, agent-authored one-line diff, human merge, cluster recovered. Pull requests #5 and #6 on `estate-gitops`.
 
@@ -199,7 +242,7 @@ A fix is possible when two things are true at once: the root cause is visible in
 
 **What it cannot do.**
 
-- Anything needing an application code change. If the bug is in the service source rather than the manifest, the remediator has no access to it — it only holds the GitOps repository.
+- Anything needing an application code change, per the boundary above.
 - Anything larger than three files or twelve changed lines. Refused at the write path, not merely discouraged. That cap exists because a live run once proposed a fix that also replaced the container image with one that did not exist and deleted thirty-nine lines of working entrypoint on the way.
 - Anything outside the `demo` namespace. Refused by policy before dispatch.
 - Anything requiring a cluster action rather than a file change — restarting a pod, draining a node, scaling up, rolling back.
@@ -483,7 +526,14 @@ Every governance control is now enforced and proven. What is left is coverage, d
 
 **Write the Devpost submission.**
 
-Done since the last revision of this section: the CI applier is wired (`rbac/warden-sync.yaml` applied, `sync.yml` in `.github/workflows/`, all three repository secrets set through stdin so the cluster token never touched a scrollback); TLS verification is on and the handshake is checked before the CA is trusted; the GitHub App holds the write path and branch protection now refuses it; the stale `warden/*` branches are deleted.
+Done since the last revision of this section:
+
+- **The CI applier is wired.** `rbac/warden-sync.yaml` applied, `sync.yml` in `.github/workflows/`, and all three repository secrets set through stdin so the cluster token never touched a scrollback.
+- **TLS verification is on**, and the handshake is checked before the CA is trusted rather than after.
+- **The GitHub App holds the write path**, and branch protection refuses it — HTTP 409 where the personal access token got 201.
+- **The runtime and the dashboard are one service.** The Pub/Sub and webhook endpoints moved into a router (`warden/ingest.py`) that both apps mount, so one deploy and one URL serve the operations screen, the alert ingress and the GitHub webhook. Two services meant two deploys and two URLs, and the webhook's was the one that had to be stable and public.
+- **The operations screen distinguishes agents from everything else.** All four agents share one chassis and carry a different instrument; the alert, the reviewer and CI are drawn as deliberately different things; and each stage header carries an `AGENT` / `SIGNAL` / `HUMAN` / `CI` tag. A viewer should not have to infer from a silhouette which three of the seven stages the fleet cannot occupy, because that is the whole argument.
+- **The stale `warden/*` branches are deleted** from `estate-gitops`.
 
 ---
 
