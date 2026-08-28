@@ -220,6 +220,11 @@ resource "google_project_iam_member" "proxy_roles" {
     "roles/datastore.user",               # the ONLY identity that can write audit records
     "roles/aiplatform.user",
     "roles/cloudtrace.agent",
+    # Cloud Run runs as this identity. A custom runtime service account does not
+    # inherit the default compute account's logging grant, and the symptom is a
+    # service that works while producing no logs at all.
+    "roles/logging.logWriter",
+    "roles/monitoring.metricWriter",
   ])
   project = var.project_id
   role    = each.value
@@ -274,7 +279,14 @@ resource "google_project_iam_member" "pubsub_token_creator" {
 # --------------------------------------------------------------------------
 
 resource "google_secret_manager_secret" "secrets" {
-  for_each  = toset(["github-token", "aks-reader-token", "aks-apiserver"])
+  for_each = toset([
+    "github-token",
+    "aks-reader-token",
+    "aks-apiserver",
+    "aks-ca-cert",           # the cluster CA, as an inline PEM
+    "github-app-key",        # the App private key, mounted as a file on Cloud Run
+    "github-webhook-secret", # without it /webhook/github refuses every delivery
+  ])
   secret_id = each.value
 
   replication {
