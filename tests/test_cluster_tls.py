@@ -30,8 +30,14 @@ PEM = "-----BEGIN CERTIFICATE-----\nZmFrZQ==\n-----END CERTIFICATE-----"
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch):
+    # Empty string, not delenv. `Settings` reads `.env`, and os.environ
+    # outranks it — so deleting the variable does not unset the value, it
+    # uncovers the operator's real one underneath. An empty string is what
+    # "configured to nothing" has to look like. Without this the two tests
+    # that assert absence pass in CI and fail on the one machine where the
+    # project is actually configured.
     for var in ("AKS_CA_CERT_PATH", "AKS_CA_CERT"):
-        monkeypatch.delenv(var, raising=False)
+        monkeypatch.setenv(var, "")
     from warden.config import settings
 
     settings.cache_clear()
