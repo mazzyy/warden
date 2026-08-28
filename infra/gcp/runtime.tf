@@ -10,11 +10,21 @@
 # that wakes the fleet; and a scheduled sweep so the loop runs with nobody at a
 # keyboard.
 #
-# ORDER MATTERS. Cloud Run refuses to create a service whose image does not
-# exist, so build and push once before the first apply:
+# ORDER MATTERS, twice. Cloud Run refuses to start a revision whose image does
+# not exist, and refuses again if any referenced secret has no `latest` version.
+# Terraform creates the secret containers and deliberately never creates a
+# version — a value passed through Terraform is written to state in plaintext —
+# so both have to be true before the apply that needs them:
 #
-#   gcloud builds submit --tag europe-west3-docker.pkg.dev/$PROJECT/warden/warden:latest
-#   terraform apply -var alert_email=you@example.com -var billing_account=...
+#   terraform apply -target=google_project_service.apis \
+#                   -target=google_artifact_registry_repository.warden
+#   docker buildx build --platform linux/amd64 -t <repo>/warden:latest --push .
+#   ../../scripts/push-secrets.sh
+#   terraform apply
+#
+# --platform is not optional from an Apple Silicon machine: Cloud Run is amd64
+# and rejects an arm64 image with a message about the image not being loadable,
+# which reads like a bad push rather than an architecture mismatch.
 #
 # After that, `gcloud run deploy warden --image ...` redeploys without Terraform
 # fighting you for the image field — see the lifecycle block below.
@@ -133,6 +143,19 @@ resource "google_cloud_run_v2_service" "warden" {
         name  = "ESTATE_NAMESPACE"
         value = "demo"
       }
+
+      # Explicit rather than relying on the defaults in config.py. /healthz
+      # reports spend as a fraction of this cap and flips to 503 above the warn
+      # ratio, so the number the service is judged against should be visible in
+      # the service's own configuration.
+      env {
+        name  = "BUDGET_USD_CAP"
+        value = "5.0"
+      }
+      env {
+        name  = "BUDGET_WARN_RATIO"
+        value = "0.8"
+      }
       env {
         name  = "GITHUB_OWNER"
         value = "mazzyy"
@@ -208,12 +231,25 @@ resource "google_cloud_run_v2_service" "warden" {
         mount_path = "/secrets/github"
       }
 
+      # TCP, deliberately, and not /healthz.
+      #
+      # A startup probe answers one question: is the process listening. /healthz
+      # answers a different one — it reaches Firestore, sums the spend against
+      # the cap, and returns 503 when the system is running but degraded. That
+      # is exactly right for the uptime check and exactly wrong here: a cold
+      # Firestore call slower than the probe timeout makes the revision fail to
+      # start, and Cloud Run then destroys it rather than serving a degraded
+      # service that would have recovered on its own in ten seconds.
+      #
+      # Generous timings on purpose. Importing ADK and constructing the
+      # Firestore client on a cold instance is slow, and the cost of waiting is
+      # a few seconds while the cost of giving up is a failed deploy.
       startup_probe {
-        http_get { path = "/healthz" }
-        initial_delay_seconds = 5
+        tcp_socket { port = 8080 }
+        initial_delay_seconds = 10
         timeout_seconds       = 5
-        period_seconds        = 5
-        failure_threshold     = 12
+        period_seconds        = 10
+        failure_threshold     = 18
       }
     }
 

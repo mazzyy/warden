@@ -1,0 +1,47 @@
+# What NOT to upload as build context.
+#
+# Without this file the context is 1.1 GB — .venv alone is 782 MB across 42,033
+# files — and `gcloud builds submit` sits there tarring it up with no progress
+# output, which looks exactly like a hang.
+#
+# gcloud will derive this from .gitignore when the file is absent, but only
+# after it has already decided how to treat the directory. Being explicit costs
+# nothing and removes a variable from a step you will run several times this
+# week.
+
+.git/
+.gitignore
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# The image builds the SPA itself in stage one. Shipping the host's node_modules
+# would upload 40 MB and then be overwritten by `npm ci` anyway.
+warden/dashboard/web/node_modules/
+warden/dashboard/web/dist/
+
+# Local runtime state and credentials. Neither belongs in a build context, and
+# .env in particular would bake a live token into an image layer.
+.warden-state/
+.env
+.env*
+!.env.example
+*.pem
+*.key
+kubeconfig*
+service-account*.json
+
+# Terraform state can contain secrets in plaintext.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+
+# Docs and planning material are not inputs to the image.
+docs/
+infra/
+tests/
+*.md

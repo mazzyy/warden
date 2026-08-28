@@ -1,0 +1,23 @@
+# Mirrors .gcloudignore, for `docker build` run locally.
+#
+# The node stage does `COPY warden/dashboard/web/ ./` — without this it copies
+# the host's node_modules into the builder, where `npm ci` then deletes and
+# rebuilds it. Slow, and platform-specific binaries can survive long enough to
+# break the build in confusing ways.
+.git/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+warden/dashboard/web/node_modules/
+warden/dashboard/web/dist/
+.warden-state/
+.env
+.env*
+!.env.example
+*.pem
+*.key
+.terraform/
+*.tfstate*
+*.tfvars
