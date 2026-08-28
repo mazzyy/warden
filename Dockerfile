@@ -52,6 +52,17 @@ COPY warden/ ./warden/
 COPY manifests/ ./manifests/
 COPY --from=web /web/dist ./warden/dashboard/web/dist
 
+# COPY preserves the source file's mode from the build context, so a file that
+# is not world-readable on the machine that ran `docker build` arrives in the
+# image unreadable by the unprivileged user below. The failure is a
+# PermissionError on an import, deep in a traceback, on whichever module
+# happened to be restrictive — here it was control_plane/budget.py, and only
+# on one developer's laptop.
+#
+# a+rX, not a+r: capital X sets the execute bit on directories only, so
+# directories stay traversable and .py files do not become executable.
+RUN chown -R warden:warden /app && chmod -R a+rX /app
+
 USER warden
 
 # Cloud Run injects $PORT (8080 by default). Read it rather than hardcoding —
