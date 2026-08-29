@@ -148,6 +148,13 @@ resource "google_cloud_run_v2_service" "warden" {
       # reports spend as a fraction of this cap and flips to 503 above the warn
       # ratio, so the number the service is judged against should be visible in
       # the service's own configuration.
+      # /pubsub verifies the OIDC token against this and 403s anything else.
+      # Without it the endpoint fails closed and refuses every delivery.
+      env {
+        name  = "PUBSUB_PUSH_SA"
+        value = google_service_account.pubsub_invoker.email
+      }
+
       env {
         name  = "BUDGET_USD_CAP"
         value = "5.0"
@@ -308,6 +315,23 @@ resource "google_cloud_run_v2_service_iam_member" "pubsub_invoker" {
   name     = google_cloud_run_v2_service.warden.name
   role     = "roles/run.invoker"
   member   = "serviceAccount:${google_service_account.pubsub_invoker.email}"
+}
+
+# The hosted project URL is a required submission field, so a person with the
+# link has to be able to open the operations screen. That means allUsers on
+# roles/run.invoker, which also means Cloud Run stops being the thing guarding
+# the alert ingress — see _push_caller_ok() in warden/ingest.py, which is where
+# that check now lives.
+#
+# What is actually exposed: a read-only screen, a webhook that refuses any
+# delivery without a valid HMAC signature, and an ingress that refuses any push
+# not signed for pubsub-invoker.
+resource "google_cloud_run_v2_service_iam_member" "public" {
+  project  = google_cloud_run_v2_service.warden.project
+  location = google_cloud_run_v2_service.warden.location
+  name     = google_cloud_run_v2_service.warden.name
+  role     = "roles/run.invoker"
+  member   = "allUsers"
 }
 
 resource "google_pubsub_subscription" "alerts" {

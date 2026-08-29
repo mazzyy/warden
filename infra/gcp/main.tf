@@ -105,7 +105,10 @@ resource "google_monitoring_notification_channel" "email" {
 resource "google_billing_budget" "cap" {
   count = var.billing_account == "" ? 0 : 1
 
-  billing_account = "billingAccounts/${var.billing_account}"
+  # The bare ID. The provider prepends "billingAccounts/" itself, and doing it
+  # here too produces /v1/billingAccounts/billingAccounts/<id>/budgets and a 404
+  # whose body is a Google error page rather than anything about billing.
+  billing_account = var.billing_account
   display_name    = "Warden ${var.budget_usd} USD cap"
 
   budget_filter {

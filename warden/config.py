@@ -101,6 +101,13 @@ class Settings(BaseSettings):
     # remote trigger for the fleet, not merely an untidy default.
     github_webhook_secret: str = Field(default="", alias="GITHUB_WEBHOOK_SECRET")
 
+    # The service account Pub/Sub signs its push deliveries as. /pubsub verifies
+    # the OIDC token against this and refuses anything else. It exists because
+    # the hosted URL has to be public for a person to open the operations
+    # screen, and the moment it is, Cloud Run's roles/run.invoker stops being
+    # the thing standing between the alert ingress and the open internet.
+    pubsub_push_sa: str = Field(default="", alias="PUBSUB_PUSH_SA")
+
     github_app_id: str = Field(default="", alias="GITHUB_APP_ID")
     github_app_installation_id: str = Field(default="", alias="GITHUB_APP_INSTALLATION_ID")
     github_app_private_key_path: str = Field(default="", alias="GITHUB_APP_PRIVATE_KEY_PATH")

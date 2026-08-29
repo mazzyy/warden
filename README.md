@@ -20,7 +20,7 @@ There are eight claims the design makes. All eight are now enforced by something
 
 | Claim | What enforces it | How it was proven |
 | --- | --- | --- |
-| An agent cannot call a tool it was not granted | ADK `before_tool_callback`, in-process | `make probe` — 4 agents × 11 tools, every denial exercised |
+| An agent cannot call a tool it was not granted | ADK `before_tool_callback`, in-process | `make probe` — 4 agents × 13 tools, every denial exercised |
 | No agent can write to the cluster | `warden-reader` ServiceAccount, get/list/watch only | `verify-rbac.sh` — attempts a delete, is refused |
 | A patch cannot exceed its blast radius | Namespace, file count and line count, checked twice | Policy tests, plus a second check against the real diff |
 | The logs a diagnosis rests on are real | Cluster CA pinned on the API connection | TLS handshake verified before the CA is accepted |
@@ -35,7 +35,7 @@ On that path, "the agent cannot merge its own work" was true only because Warden
 
 Warden still says which credential it is running as, out loud, on every run: the demo header prints `boundary: enforced` or `NOT enforced`, the pull request footer changes wording depending on the answer, and `verify-github-token.sh` exits non-zero on the weaker path.
 
-Two incident types have been built. One — a bad configuration value — has been fixed end to end against real infrastructure several times. The second, an OOMKilled workload, is injected and waiting. See [What it can actually fix](#what-it-can-actually-fix).
+Two incident types have been built and both have been fixed end to end against real infrastructure: a bad configuration value, several times, and an OOMKilled workload. See [What it can actually fix](#what-it-can-actually-fix).
 
 123 tests pass across 12 files. No cloud project, API key or spend is required to run them.
 
@@ -236,7 +236,9 @@ Beyond that boundary, a fix is possible when two things are true at once: the ro
 
 **Proven end to end against real infrastructure.** A wrong environment variable value — `htps://` instead of `https://` — crashlooping the service on startup. Real crashloop, real container logs, agent-authored one-line diff, human merge, cluster recovered. Pull requests #5 and #6 on `estate-gitops`.
 
-**Built, never run live.** An OOMKilled workload: `inject.sh oom` sets the memory limit to 64Mi against a 128MB warm-up. The fix is a different edit to a different part of the same file, which is exactly why it is the valuable second test.
+**Also proven end to end.** An OOMKilled workload: `inject.sh oom` sets the memory limit to 64Mi against a 128MB warm-up. Different symptom, different evidence, a patch to a different part of the same file — which is why it was the valuable second test. Pull request #9 on `estate-gitops`, authored by `warden-remediator[bot]` under the App identity, merged.
+
+The interesting part is what it chose. The bad commit changed two things: it raised `WARMUP_MB` to 128 *and* dropped the memory limit from 256Mi to 64Mi. The Remediator reverted the warm-up target and left the limit at 64Mi. The pods recover either way and the patch stayed well inside its blast radius — but it had no way to tell which of the two changes was the fault and which was the intent, so it reverted the one the logs pointed at and left the other alone. A reviewer restoring 256Mi is the human half of this design doing exactly the job it is here to do.
 
 **The class it covers.** Wrong config values, resource limits set too low, a bad image tag, replica counts, misconfigured readiness or liveness probes, timeouts that are too aggressive.
 

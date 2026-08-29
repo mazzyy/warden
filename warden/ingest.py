@@ -39,6 +39,8 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from google.auth.transport import requests as google_requests
+from google.oauth2 import id_token
 from pydantic import BaseModel
 
 from warden.agents.orchestrator import handle_incident, verify_merged_incident
@@ -145,14 +147,59 @@ class PubSubEnvelope(BaseModel):
     subscription: str | None = None
 
 
+def _push_caller_ok(request: Request, expected_sa: str) -> bool:
+    """Verify the OIDC token Pub/Sub signs every push delivery with.
+
+    This check used to be Cloud Run's. `roles/run.invoker` was granted to the
+    push subscription's service account and to nobody else, so an unauthorised
+    POST never reached the container at all. That worked exactly as long as the
+    service stayed private — and the hosted URL has to be public, because a
+    judge has to be able to open the operations screen.
+
+    So the check moves one layer in, where a public URL cannot bypass it. Same
+    identity, verified by the same signature, asserted by the endpoint that
+    actually starts agent runs rather than by an IAM binding beside it.
+
+    The audience is deliberately not checked: the subscription sets it to the
+    service's own URI, which Terraform cannot reference from inside the service
+    that produces it without a cycle. The signature proves Google minted the
+    token and the email proves which identity it was minted for, which is the
+    property that matters here.
+    """
+    header = request.headers.get("authorization", "")
+    if not header.lower().startswith("bearer "):
+        return False
+    try:
+        claims = id_token.verify_oauth2_token(
+            header.split(None, 1)[1], google_requests.Request()
+        )
+    except Exception as exc:  # malformed, expired, wrong issuer, bad signature
+        log.warning("pubsub push token rejected: %s", exc)
+        return False
+    return bool(claims.get("email_verified")) and claims.get("email") == expected_sa
+
+
 @router.post("/pubsub")
-async def pubsub(envelope: PubSubEnvelope, background: BackgroundTasks) -> dict:
+async def pubsub(
+    request: Request, envelope: PubSubEnvelope, background: BackgroundTasks
+) -> dict:
     """Pub/Sub push. Acks immediately and works in the background.
 
     An incident takes tens of seconds; Pub/Sub's ack deadline is shorter than
     that, and a late ack means redelivery — which would run the fleet twice on
     the same alert and open two pull requests. Ack first, work after.
     """
+    expected_sa = settings().pubsub_push_sa
+    if not expected_sa:
+        # Fail closed, the same way the webhook does and for the same reason.
+        # An unauthenticated endpoint that runs agents is worse than one that
+        # does not work, because the second failure is loud.
+        log.error("PUBSUB_PUSH_SA is not set — refusing push deliveries")
+        raise HTTPException(503, "pubsub push identity not configured")
+
+    if not _push_caller_ok(request, expected_sa):
+        raise HTTPException(403, "push token did not verify")
+
     _ready()
 
     raw = envelope.message.get("data")
