@@ -111,7 +111,20 @@ app.include_router(ingest.router)
 # --------------------------------------------------------------------------
 
 
+# Two paths, one handler.
+#
+# On Cloud Run, GET /healthz never reaches this container. Google's front end
+# answers it with its own 404 page — no `server: Google Frontend` header, no
+# x-cloud-trace-context, none of the headers a response from here carries. `/`,
+# `/api/*`, /pubsub, /webhook/github and unrecognised paths all route normally;
+# that one path does not. Whatever the reason, it is above us and we cannot
+# fix it from inside the app.
+#
+# So /healthz stays — it works locally, in Docker, and anywhere that is not
+# Cloud Run — and /api/healthz is the alias that is reachable in production,
+# under a prefix already proven to route.
 @app.get("/healthz")
+@app.get("/api/healthz")
 async def healthz() -> JSONResponse:
     s = settings()
     store = get_store()

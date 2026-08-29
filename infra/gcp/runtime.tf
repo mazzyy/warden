@@ -434,7 +434,12 @@ resource "google_monitoring_uptime_check_config" "healthz" {
   period       = "300s"
 
   http_check {
-    path         = "/healthz"
+    # "/" and not "/healthz", for two reasons. The check's job is to answer
+    # "can a judge open the demo URL", and "/" is literally the thing they
+    # open. And /healthz is a deep check that returns 503 when the system is
+    # running but degraded — an uptime alert should fire when the URL is
+    # unreachable, not when the budget crosses a warning ratio.
+    path         = "/"
     port         = 443
     use_ssl      = true
     validate_ssl = true
