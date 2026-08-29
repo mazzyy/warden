@@ -29,6 +29,20 @@ from warden.control_plane.registry import load_all
 from warden.control_plane.store import FirestoreStore, InMemoryStore, Store
 from warden.models import Decision, FleetState, IncidentStatus, RunStatus
 
+# Configure the root logger here, not only in server.py.
+#
+# server.py has always done this, and this module never did — which was
+# invisible until the two were consolidated and Cloud Run started serving
+# `warden.dashboard.api:app` instead. The root logger then sat at WARNING, so
+# every log.info() in ingest, the orchestrator, the runtime and the policy
+# proxy was dropped. Uvicorn configures its own logging, so the access log
+# still appeared: the service looked like it was answering requests and doing
+# nothing else, while the fleet ran silently behind it.
+#
+# An audit trail that reaches Firestore but not the logs is half an audit
+# trail, and the missing half is the one you read while something is on fire.
+logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
+
 log = logging.getLogger("warden.dashboard")
 
 WEB_DIST = Path(__file__).parent / "web" / "dist"

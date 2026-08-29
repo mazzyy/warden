@@ -510,6 +510,9 @@ output "next_steps" {
          printf '%s' "$AKS_READER_TOKEN" | gcloud secrets versions add aks-reader-token  --data-file=-
     2. Add the webhook on estate-gitops using webhook_url, event: pull_request.
     3. curl -sf $(terraform output -raw service_url)/healthz
-    4. Watch one sweep land:  gcloud run services logs tail warden --region ${var.region}
+    4. Watch one sweep land:
+         gcloud beta run services logs tail warden --region ${var.region}
+       or, without the beta component:
+         gcloud run services logs read warden --region ${var.region} --limit 50
   EOT
 }
