@@ -10,13 +10,15 @@ Everything else here — the policy plugin, the YAML manifests, the read-only Se
 
 Built for the All Things Agentic Hackathon, in the Fortified Enterprise Fleet category.
 
+**Running now:** <https://warden-184359031908.europe-west3.run.app> — the operations screen, the alert ingress and the GitHub webhook on one Cloud Run service. A Cloud Scheduler sweep wakes the fleet every ten minutes against a live AKS estate; most sweeps are closed by Triage as noise for about two hundredths of a cent, which is the cheap half of the argument working. `/api/healthz` reports what it can reach.
+
 ---
 
 ## Status, honestly
 
 This section is first on purpose. A governance project that oversells itself is worse than one that admits its gaps.
 
-There are eight claims the design makes. All eight are now enforced by something outside the agent's reach, and each one has been observed refusing the forbidden action against live infrastructure — not asserted by reading a configuration value back.
+There are nine claims the design makes. All nine are now enforced by something outside the agent's reach, and each one has been observed refusing the forbidden action against live infrastructure — not asserted by reading a configuration value back.
 
 | Claim | What enforces it | How it was proven |
 | --- | --- | --- |
@@ -28,6 +30,7 @@ There are eight claims the design makes. All eight are now enforced by something
 | The agent cannot merge its own pull request | A GitHub App, which holds no repository role | Direct commit to protected `main` returned **HTTP 409** |
 | The audit trail holds no secrets | Recursive redaction on tool arguments and results | 10 tests, including keys the first version missed |
 | A merge closes the incident that opened *that* pull request | HMAC signature check, then a match on `pr_url` | 15 tests — with two incidents in flight, the wrong one stays open |
+| The alert ingress authenticates its caller | OIDC token verification on `/pubsub`, matched to the push identity | `curl -X POST` against the public URL — **403**, with and without a bearer token |
 
 Row six is the one worth reading twice, because it started as the project's open gap and the fix was not the obvious one. A fine-grained personal access token **inherits the repository role of the human who minted it**. We measured that: with branch protection enabled requiring one approving review, a direct commit to `main` using the agent's own token returned **HTTP 201** and landed. Narrow scopes decide which repositories and which APIs a token may touch. They do not decide who the token *is*.
 

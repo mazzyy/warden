@@ -122,6 +122,28 @@ h1, h2 { font-family: Archivo, ui-sans-serif, sans-serif; margin: 0; }
   box-shadow: var(--shadow);
 }
 .hdr-l { display: flex; align-items: center; gap: 11px; }
+
+/* The one sentence a cold visitor needs before the console makes sense. */
+.thesis {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 14px;
+  margin-top: 10px;
+  padding: 10px 16px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--dim, #9aa0a6);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--gold, #d9a441);
+  border-radius: var(--r);
+}
+.thesis b { color: var(--fg, #f2e7d0); font-weight: 600; }
+.thesis-links { margin-left: auto; display: flex; gap: 14px; white-space: nowrap; }
+.thesis-links a { color: var(--gold, #d9a441); text-decoration: none; border-bottom: 1px solid transparent; }
+.thesis-links a:hover { border-bottom-color: currentColor; }
+
 .mark {
   width: 30px; height: 30px; border-radius: 7px;
   background: var(--accent);

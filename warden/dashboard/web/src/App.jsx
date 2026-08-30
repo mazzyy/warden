@@ -118,6 +118,21 @@ export default function App() {
     <div className={`app${live.killSwitch ? ' killed' : ''}`}>
       <Header live={live} view={view} setView={setView} onKill={toggleKill} err={err} />
 
+      {/* For someone arriving cold. This screen is an operations console: it
+          assumes you already know what Warden is, and a judge opening the
+          hosted URL does not. One line of thesis and two links cost nothing
+          and are the difference between "an empty dashboard" and "oh, that is
+          the whole argument". */}
+      <div className="thesis">
+        <b>No agent here holds a production write credential.</b> Their only write
+        primitive is opening a pull request — a human reviews it, and a CI identity
+        no agent holds applies the merge.
+        <span className="thesis-links">
+          <a href="https://github.com/mazzyy/warden" target="_blank" rel="noreferrer">Source</a>
+          <a href="https://github.com/mazzyy/estate-gitops" target="_blank" rel="noreferrer">The estate</a>
+        </span>
+      </div>
+
       {live.demoData && (
         <div className="banner">
           <b>Sample data.</b> No incident has run against this store yet. Start one with{' '}
